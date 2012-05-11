@@ -33,6 +33,8 @@
 #include <KTextEditor/Range>
 
 #include "parser/parsesession.h"
+#include "parser/languagefeatures.h"
+
 #include "cppduchain/contextbuilder.h"
 
 class PreprocessJob;
@@ -180,6 +182,9 @@ public:
     void processDelayedImports();
     
     KDevelop::ModificationRevisionSet includePathDependencies() const ;
+
+    CPPLanguageFeatures languageFeatures() const { return m_languageFeatures; };
+    void setLanguageFeatures(CPPLanguageFeatures level) { m_languageFeatures = level; }
     
     virtual ControlFlowGraph* controlFlowGraph();
     virtual DataAccessRepository* dataAccessInformation();
@@ -225,6 +230,7 @@ private:
     mutable QMutex m_waitForIncludePathsMutex;
     mutable QWaitCondition m_waitForIncludePaths;
     bool m_needsUpdate;
+    CPPLanguageFeatures m_languageFeatures;
 };
 
 class CPPInternalParseJob : public ThreadWeaver::Job

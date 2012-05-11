@@ -90,6 +90,8 @@ public:
    * and unsets the association to the parameter-declaration-clause.
    */
   void fixupInitializerFromParameter(InitDeclaratorAST* node, ParseSession* session);
+  CPPLanguageFeatures languageFeatures() const { return lexer.languageFeatures(); }
+  void setLanguageFeatures(CPPLanguageFeatures features) { lexer.setLanguageFeatures(features);}
 
 private:
   /**Convenience method to report problems. Constructs the problem

@@ -21,6 +21,7 @@
 #define LEXER_H
 
 #include "symbol.h"
+#include "languagefeatures.h"
 #include <cppparserexport.h>
 #include <QtCore/QString>
 #include <cstdlib>
@@ -185,6 +186,9 @@ public:
   /**Finds tokens in the @p contents buffer and fills the @ref token_stream.*/
   void tokenize(ParseSession* session);
 
+  CPPLanguageFeatures languageFeatures() const { return m_languageFeatures; }
+  void setLanguageFeatures(CPPLanguageFeatures features) { m_languageFeatures = features; }
+
   ParseSession* session;
 
 private:
@@ -314,6 +318,7 @@ private:
   bool m_leaveSize; //Marks the current token that its size should not be automatically set
   bool m_canMergeComment; //Whether we may append new comments to the last encountered one
   bool m_firstInLine;   //Whether the next token is the first one in a line
+  CPPLanguageFeatures m_languageFeatures;
   
   ///scan table contains pointers to the methods to scan for various token types
   static scan_fun_ptr s_scan_table[];

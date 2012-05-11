@@ -2849,7 +2849,8 @@ bool Parser::parseInitializerList(InitializerListAST *&node)
         }
 
       InitializerClauseAST *init_clause = 0;
-      if (!parseInitializerClause(init_clause) && !parseDesignatedInitializer(init_clause))
+      // Designated initializers should only be considered for C99
+      if (!parseInitializerClause(init_clause) && (languageFeatures() & CPP_FEAT_C99) && !parseDesignatedInitializer(init_clause))
         {
           return false;
         }
@@ -4868,7 +4869,10 @@ bool Parser::parseCastExpression(ExpressionAST *&node)
     }
 
   rewind(start);
-  return parseUnaryExpression(node);
+  bool ret = parseUnaryExpression(node);
+  // C99 allows a braced initialization list to follow a cast expression
+  if (!ret && (languageFeatures() & CPP_FEAT_C99)) return parseBracedInitList(node);
+  else return ret;
 }
 
 bool Parser::parsePmExpression(ExpressionAST *&node)
@@ -5201,7 +5205,7 @@ bool Parser::parseConditionalExpression(ExpressionAST *&node, bool templArgs)
       advance();
 
       ExpressionAST *leftExpr = 0;
-      if (!parseExpression(leftExpr)) {
+      if (!parseExpression(leftExpr) && !(languageFeatures() & CPP_FEAT_C99)) {
         //NOTE: allow ommitting operand, for compatibility with gcc, see also:
         // http://gcc.gnu.org/onlinedocs/gcc-2.95.3/gcc_4.html#SEC70
         // https://bugs.kde.org/show_bug.cgi?id=292357

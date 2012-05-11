@@ -442,7 +442,17 @@ CppLanguageSupport* CppLanguageSupport::self() {
 
 KDevelop::ParseJob *CppLanguageSupport::createParseJob( const IndexedString &url )
 {
-    return new CPPParseJob( url, this );
+    CPPParseJob *job = new CPPParseJob(url, this);
+    KDevelop::IProject *project = KDevelop::ICore::self()->projectController()->findProjectForUrl(url.toUrl());
+    if (project) {
+        KSharedConfig::Ptr configPtr = project->projectConfiguration();
+        QString lang = configPtr->group("Project").readEntry("Language", "");
+        if (lang == "C") job->setLanguageFeatures(CPP_FEAT_C99);
+        else if (lang == "C++") job->setLanguageFeatures(CPP_FEAT_CPP);
+        else if (lang == "C++11") job->setLanguageFeatures(CPP_FEAT_CPP11);
+    }
+
+    return job;
 }
 
 KDevelop::ICodeHighlighting *CppLanguageSupport::codeHighlighting() const

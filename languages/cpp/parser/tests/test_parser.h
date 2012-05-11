@@ -25,6 +25,7 @@
 
 #include "control.h"
 #include "dumptree.h"
+#include "languagefeatures.h"
 
 class pool;
 
@@ -153,7 +154,7 @@ private:
 
   ParseSession* lastSession;
 
-  TranslationUnitAST* parse(const QByteArray& unit);
+  TranslationUnitAST* parse(const QByteArray& unit, CPPLanguageFeatures features = DEFAULT_CPP_LANGUAGE_FEATURES);
 };
 
 #endif // TEST_PARSER_H

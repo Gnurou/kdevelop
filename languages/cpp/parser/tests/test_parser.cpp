@@ -738,7 +738,7 @@ void TestParser::testDesignatedInitializers()
               "\n  .x = 10,"
               "\n  .y = SOME_CONST,"
               "\n  .z = 10,"
-              "\n};");
+              "\n};", CPP_FEAT_C99);
 
   QVERIFY(ast != 0);
   QVERIFY(control.problems().isEmpty());
@@ -751,7 +751,7 @@ void TestParser::testDesignatedInitializers()
   ast = parse("\nint ia[10][5] = {"
               "\n  [1] = 10,"
               "\n  [2][B] = SOME_CONST,"
-              "\n};");
+              "\n};", CPP_FEAT_C99);
 
   QVERIFY(ast != 0);
   QVERIFY(control.problems().isEmpty());
@@ -961,10 +961,11 @@ void TestParser::testTernaryEmptyExpression()
   QVERIFY(ast);
 }
 
-TranslationUnitAST* TestParser::parse(const QByteArray& unit)
+TranslationUnitAST* TestParser::parse(const QByteArray &unit, CPPLanguageFeatures features)
 {
   control = Control(); // Clear the problems
   Parser parser(&control);
+  parser.setLanguageFeatures(features);
   lastSession = new ParseSession();
 
   rpp::Preprocessor preprocessor;

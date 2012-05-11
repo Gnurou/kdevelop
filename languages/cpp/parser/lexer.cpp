@@ -155,13 +155,11 @@ void Lexer::skipComment()
 
 const uint index_size = 200;
 
-KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size > createIndicesForTokens() {
+KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size > createIndicesForTokens(CPPLanguageFeatures features) {
   KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size > ret;
   ret.resize(index_size);
   #define ADD_TOKEN(string) ret[KDevelop::IndexedString(#string).index() % index_size].append(qMakePair(KDevelop::IndexedString(#string).index(), Token_ ## string));
   #define ADD_TOKEN2(string, tok) ret[KDevelop::IndexedString(#string).index() % index_size].append(qMakePair(KDevelop::IndexedString(#string).index(), Token_ ## tok));
-  ADD_TOKEN(K_DCOP);
-  ADD_TOKEN(Q_OBJECT);
   ADD_TOKEN(__typeof);
   ADD_TOKEN2(__typeof__, __typeof);
   ADD_TOKEN2(typeof, __typeof);
@@ -170,85 +168,53 @@ KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size 
   ADD_TOKEN(asm);
   ADD_TOKEN2(__asm, asm);
   ADD_TOKEN2(__asm__, asm)
-  ADD_TOKEN(auto);
   ADD_TOKEN(bitand);
   ADD_TOKEN(bitor);
-  ADD_TOKEN(bool);
   ADD_TOKEN(break);
   ADD_TOKEN(case);
-  ADD_TOKEN(catch);
   ADD_TOKEN(char);
   ADD_TOKEN(char16_t);
   ADD_TOKEN(char32_t);
-  ADD_TOKEN(class);
   ADD_TOKEN(compl);
   ADD_TOKEN(const);
   ADD_TOKEN(constexpr);
-  ADD_TOKEN(const_cast);
   ADD_TOKEN(continue);
   ADD_TOKEN(decltype);
   ADD_TOKEN2(__decltype, decltype);
   ADD_TOKEN(default);
-  ADD_TOKEN(delete);
   ADD_TOKEN(do);
   ADD_TOKEN(double);
-  ADD_TOKEN(dynamic_cast);
   ADD_TOKEN(else);
-  //ADD_TOKEN(emit);
   ADD_TOKEN(enum);
   ADD_TOKEN(explicit);
   ADD_TOKEN(export);
   ADD_TOKEN(extern);
-  ADD_TOKEN(false);
   ADD_TOKEN(float);
-  ADD_TOKEN(final);
   ADD_TOKEN(for);
-  ADD_TOKEN(friend);
   ADD_TOKEN(goto);
   ADD_TOKEN(if);
   ADD_TOKEN(inline);
   ADD_TOKEN2(__inline__, inline);
   ADD_TOKEN2(__inline, inline);
   ADD_TOKEN(int);
-  ADD_TOKEN(k_dcop);
-  ADD_TOKEN(k_dcop_signals);
   ADD_TOKEN(long);
   ADD_TOKEN(mutable);
-  ADD_TOKEN(namespace);
-  ADD_TOKEN(new);
-  ADD_TOKEN(noexcept);
   ADD_TOKEN(not);
   ADD_TOKEN(not_eq);
-  ADD_TOKEN(nullptr);
-  ADD_TOKEN(operator);
   ADD_TOKEN(or);
   ADD_TOKEN(or_eq);
-  ADD_TOKEN(override);
-  ADD_TOKEN(private);
-  ADD_TOKEN(protected);
-  ADD_TOKEN(public);
   ADD_TOKEN(register);
-  ADD_TOKEN(reinterpret_cast);
   ADD_TOKEN(return);
   ADD_TOKEN(short);
-  ADD_TOKEN(__qt_signals__);
   ADD_TOKEN(signed);
   ADD_TOKEN2(__signed__, signed);
   ADD_TOKEN(sizeof);
-  ADD_TOKEN(__qt_slots__);
   ADD_TOKEN(static);
-  ADD_TOKEN(static_assert);
-  ADD_TOKEN(static_cast);
   ADD_TOKEN(struct);
   ADD_TOKEN(switch);
-  ADD_TOKEN(template);
-  ADD_TOKEN(this);
   ADD_TOKEN(thread_local);
   ADD_TOKEN2(__thread, thread_local);
   ADD_TOKEN2(__thread__, thread_local);
-  ADD_TOKEN(throw);
-  ADD_TOKEN(true);
-  ADD_TOKEN(try);
   ADD_TOKEN(typedef);
   ADD_TOKEN(typeid);
   ADD_TOKEN(typename);
@@ -256,7 +222,6 @@ KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size 
   ADD_TOKEN(unsigned);
   ADD_TOKEN2(__unsigned__, unsigned);
   ADD_TOKEN(using);
-  ADD_TOKEN(virtual);
   ADD_TOKEN(void);
   ADD_TOKEN(volatile);
   ADD_TOKEN2(__volatile__, volatile);
@@ -264,9 +229,49 @@ KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size 
   ADD_TOKEN(while);
   ADD_TOKEN(xor);
   ADD_TOKEN(xor_eq);
-  ADD_TOKEN(__qt_signal__);
-  ADD_TOKEN(__qt_slot__);
-  ADD_TOKEN(__qt_property__);
+
+  if (features & CPP_FEAT_CPP) {
+    ADD_TOKEN(auto);
+    ADD_TOKEN(bool);
+    ADD_TOKEN(catch);
+    ADD_TOKEN(class);
+    ADD_TOKEN(const_cast);
+    ADD_TOKEN(delete);
+    ADD_TOKEN(dynamic_cast);
+    //ADD_TOKEN(emit);
+    ADD_TOKEN(false);
+    ADD_TOKEN(final);
+    ADD_TOKEN(friend);
+    ADD_TOKEN(namespace);
+    ADD_TOKEN(new);
+    ADD_TOKEN(noexcept);
+    ADD_TOKEN(nullptr);
+    ADD_TOKEN(operator);
+    ADD_TOKEN(override);
+    ADD_TOKEN(private);
+    ADD_TOKEN(protected);
+    ADD_TOKEN(public);
+    ADD_TOKEN(reinterpret_cast);
+    ADD_TOKEN(static_assert);
+    ADD_TOKEN(static_cast);
+    ADD_TOKEN(template);
+    ADD_TOKEN(this);
+    ADD_TOKEN(throw);
+    ADD_TOKEN(true);
+    ADD_TOKEN(try);
+    ADD_TOKEN(using);
+    ADD_TOKEN(virtual);
+    ADD_TOKEN(__qt_signal__);
+    ADD_TOKEN(__qt_slot__);
+    ADD_TOKEN(__qt_property__);
+    ADD_TOKEN(__qt_signals__);
+    ADD_TOKEN(__qt_slots__);
+    ADD_TOKEN(k_dcop);
+    ADD_TOKEN(k_dcop_signals);
+    ADD_TOKEN(K_DCOP);
+    ADD_TOKEN(Q_OBJECT);
+  }
+
   return ret;
 }
 
@@ -276,7 +281,8 @@ bool Lexer::s_initialized = false;
 Lexer::Lexer(Control *c)
   : session(0),
     control(c),
-    m_leaveSize(false)
+    m_leaveSize(false),
+    m_languageFeatures(DEFAULT_CPP_LANGUAGE_FEATURES)
 {
 }
 
@@ -646,7 +652,7 @@ void Lexer::scan_identifier_or_keyword()
   uint bucket = (*cursor.current) % index_size;
 
   //A very simple lookup table: First level contains all pairs grouped by with (index % index_size), then there is a simple list
-  static const KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size > indicesForTokens = createIndicesForTokens();
+  static const KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size > indicesForTokens = createIndicesForTokens(languageFeatures());
   for(int a = 0; a < indicesForTokens[bucket].size(); ++a) {
     if(indicesForTokens[bucket][a].first == *cursor.current) {
       (*session->token_stream)[index++].kind = indicesForTokens[bucket][a].second;

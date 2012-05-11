@@ -128,7 +128,8 @@ CPPParseJob::CPPParseJob( const IndexedString& url, ILanguageSupport* languageSu
         m_includePathsComputed( 0 ),
         m_keepDuchain( false ),
         m_parsedIncludes( 0 ),
-        m_needsUpdate( true )
+        m_needsUpdate( true ),
+        m_languageFeatures( DEFAULT_CPP_LANGUAGE_FEATURES )
 {
     if( !m_parentPreprocessor ) {
         addJob(m_preprocessJob = new PreprocessJob(this));
@@ -224,8 +225,6 @@ void CPPParseJob::mergeDefines(CppPreprocessEnvironment& env) const
   
   ///@todo Most probably, the same macro-sets will be calculated again and again.
   ///           One ReferenceCountedMacroSet would be enough.
-  
-  kDebug() << "DEFINES:" << defines;
   
   for(QHash<QString, QString>::const_iterator it = defines.constBegin(); it != defines.constEnd(); ++it)
   {
@@ -564,6 +563,7 @@ void CPPInternalParseJob::run()
 
       Control control;
       Parser parser(&control);
+      parser.setLanguageFeatures(parentJob()->languageFeatures());
 
       if(newFeatures != TopDUContext::Empty)
       {
