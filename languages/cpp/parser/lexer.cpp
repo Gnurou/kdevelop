@@ -162,6 +162,7 @@ KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size 
   #define ADD_TOKEN2(string, tok) ret[KDevelop::IndexedString(#string).index() % index_size].append(qMakePair(KDevelop::IndexedString(#string).index(), Token_ ## tok));
   ADD_TOKEN(__typeof);
   ADD_TOKEN2(__typeof__, __typeof);
+  ADD_TOKEN(__alignof__);
   ADD_TOKEN2(typeof, __typeof);
   ADD_TOKEN(and);
   ADD_TOKEN(and_eq);

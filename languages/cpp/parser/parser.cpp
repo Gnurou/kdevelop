@@ -4606,6 +4606,7 @@ bool Parser::parseUnaryExpression(ExpressionAST *&node)
       return true;
 
     case Token_sizeof:
+    case Token___alignof__:
       {
         uint sizeof_token = session->token_stream->cursor();
         advance();
