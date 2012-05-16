@@ -372,6 +372,8 @@ void pp_macro_expander::operator()(Stream& input, Stream& output, bool substitut
         static const IndexedString fileIndex = IndexedString("__FILE__");
         static const IndexedString dateIndex = IndexedString("__DATE__");
         static const IndexedString timeIndex = IndexedString("__TIME__");
+        // TODO C99 only!
+        static const IndexedString funcIndex = IndexedString("__func__");
           if (name == lineIndex)
             output.appendString(inputPosition, convertFromByteArray(QString::number(input.inputPosition().line).toUtf8()));
           else if (name == fileIndex)
@@ -380,6 +382,8 @@ void pp_macro_expander::operator()(Stream& input, Stream& output, bool substitut
             output.appendString(inputPosition, convertFromByteArray(QDate::currentDate().toString("\"MMM dd yyyy\"").toUtf8()));
           else if (name == timeIndex)
             output.appendString(inputPosition, convertFromByteArray(QTime::currentTime().toString("\"hh:mm:ss\"").toUtf8()));
+          else if (name == funcIndex)
+            output.appendString(inputPosition, convertFromByteArray(QString("\"%1\"").arg("<current function>").toUtf8()));
           else {
             if (table) {
               // In case of a merged token, find some borders for it inside a macro invocation
