@@ -68,7 +68,7 @@
 #define ifTest(x)
 #endif
 
-const int maximumInternalResolutionDepth = 3;
+const int maximumInternalResolutionDepth = 0;
 
 using namespace std;
 using namespace KDevelop;
