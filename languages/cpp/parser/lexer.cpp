@@ -164,31 +164,21 @@ KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size 
   ADD_TOKEN2(__typeof__, __typeof);
   ADD_TOKEN(__alignof__);
   ADD_TOKEN2(typeof, __typeof);
-  ADD_TOKEN(and);
-  ADD_TOKEN(and_eq);
   ADD_TOKEN(asm);
   ADD_TOKEN2(__asm, asm);
   ADD_TOKEN2(__asm__, asm)
-  ADD_TOKEN(bitand);
-  ADD_TOKEN(bitor);
   ADD_TOKEN(break);
   ADD_TOKEN(case);
   ADD_TOKEN(char);
   ADD_TOKEN(char16_t);
   ADD_TOKEN(char32_t);
-  ADD_TOKEN(compl);
   ADD_TOKEN(const);
-  ADD_TOKEN(constexpr);
   ADD_TOKEN(continue);
-  ADD_TOKEN(decltype);
-  ADD_TOKEN2(__decltype, decltype);
   ADD_TOKEN(default);
   ADD_TOKEN(do);
   ADD_TOKEN(double);
   ADD_TOKEN(else);
   ADD_TOKEN(enum);
-  ADD_TOKEN(explicit);
-  ADD_TOKEN(export);
   ADD_TOKEN(extern);
   ADD_TOKEN(float);
   ADD_TOKEN(for);
@@ -199,11 +189,6 @@ KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size 
   ADD_TOKEN2(__inline, inline);
   ADD_TOKEN(int);
   ADD_TOKEN(long);
-  ADD_TOKEN(mutable);
-  ADD_TOKEN(not);
-  ADD_TOKEN(not_eq);
-  ADD_TOKEN(or);
-  ADD_TOKEN(or_eq);
   ADD_TOKEN(register);
   ADD_TOKEN(return);
   ADD_TOKEN(short);
@@ -213,12 +198,7 @@ KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size 
   ADD_TOKEN(static);
   ADD_TOKEN(struct);
   ADD_TOKEN(switch);
-  ADD_TOKEN(thread_local);
-  ADD_TOKEN2(__thread, thread_local);
-  ADD_TOKEN2(__thread__, thread_local);
   ADD_TOKEN(typedef);
-  ADD_TOKEN(typeid);
-  ADD_TOKEN(typename);
   ADD_TOKEN(union);
   ADD_TOKEN(unsigned);
   ADD_TOKEN2(__unsigned__, unsigned);
@@ -228,40 +208,48 @@ KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size 
   ADD_TOKEN2(__volatile__, volatile);
   ADD_TOKEN(wchar_t);
   ADD_TOKEN(while);
-  ADD_TOKEN(xor);
-  ADD_TOKEN(xor_eq);
 
   if (features & CPP_FEAT_CPP) {
-    ADD_TOKEN(auto);
+    ADD_TOKEN(and);
+    ADD_TOKEN(and_eq);
+    ADD_TOKEN(bitand);
+    ADD_TOKEN(bitor);
     ADD_TOKEN(bool);
     ADD_TOKEN(catch);
     ADD_TOKEN(class);
+    ADD_TOKEN(compl);
     ADD_TOKEN(const_cast);
     ADD_TOKEN(delete);
     ADD_TOKEN(dynamic_cast);
+    ADD_TOKEN(explicit);
+    ADD_TOKEN(export);
     //ADD_TOKEN(emit);
     ADD_TOKEN(false);
-    ADD_TOKEN(final);
     ADD_TOKEN(friend);
+    ADD_TOKEN(mutable);
     ADD_TOKEN(namespace);
     ADD_TOKEN(new);
-    ADD_TOKEN(noexcept);
-    ADD_TOKEN(nullptr);
+    ADD_TOKEN(not);
+    ADD_TOKEN(not_eq);
     ADD_TOKEN(operator);
-    ADD_TOKEN(override);
+    ADD_TOKEN(or);
+    ADD_TOKEN(or_eq);
     ADD_TOKEN(private);
     ADD_TOKEN(protected);
     ADD_TOKEN(public);
     ADD_TOKEN(reinterpret_cast);
-    ADD_TOKEN(static_assert);
     ADD_TOKEN(static_cast);
     ADD_TOKEN(template);
     ADD_TOKEN(this);
     ADD_TOKEN(throw);
     ADD_TOKEN(true);
     ADD_TOKEN(try);
+    ADD_TOKEN(typeid);
+    ADD_TOKEN(typename);
     ADD_TOKEN(using);
     ADD_TOKEN(virtual);
+    ADD_TOKEN(xor);
+    ADD_TOKEN(xor_eq);
     ADD_TOKEN(__qt_signal__);
     ADD_TOKEN(__qt_slot__);
     ADD_TOKEN(__qt_property__);
@@ -271,6 +259,20 @@ KDevVarLengthArray<KDevVarLengthArray<QPair<uint, TOKEN_KIND>, 10 >, index_size 
     ADD_TOKEN(k_dcop_signals);
     ADD_TOKEN(K_DCOP);
     ADD_TOKEN(Q_OBJECT);
+  }
+
+  if (features & CPP_FEAT_CPP11) {
+    ADD_TOKEN(auto);
+    ADD_TOKEN(constexpr);
+    ADD_TOKEN(decltype);
+    ADD_TOKEN(final);
+    ADD_TOKEN(noexcept);
+    ADD_TOKEN(nullptr);
+    ADD_TOKEN(override);
+    ADD_TOKEN(static_assert);
+    ADD_TOKEN(thread_local);
+    ADD_TOKEN2(__thread, thread_local);
+    ADD_TOKEN2(__thread__, thread_local);
   }
 
   return ret;
