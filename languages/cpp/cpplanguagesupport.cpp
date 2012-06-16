@@ -449,7 +449,7 @@ KDevelop::ParseJob *CppLanguageSupport::createParseJob( const IndexedString &url
         QString lang = configPtr->group("Project").readEntry("Language", "");
         if (lang == "C") job->setLanguageFeatures(CPP_FEAT_C99);
         else if (lang == "C++") job->setLanguageFeatures(CPP_FEAT_CPP);
-        else if (lang == "C++11") job->setLanguageFeatures(CPP_FEAT_CPP11);
+        else if (lang == "C++11") job->setLanguageFeatures(CPP_FEAT_CPP | CPP_FEAT_CPP11);
     }
 
     return job;
