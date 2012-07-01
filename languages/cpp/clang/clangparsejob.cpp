@@ -46,9 +46,12 @@
 class KDevDiagnosticConsumer : public clang::DiagnosticConsumer
 {
 public:
+    KDevDiagnosticConsumer(clang::LangOptions _lo) : lo(_lo) {}
   virtual void HandleDiagnostic(clang::DiagnosticsEngine::Level DiagLevel,
                                 const clang::Diagnostic &Info);
   virtual DiagnosticConsumer *clone(clang::DiagnosticsEngine &Diags) const;
+
+  clang::LangOptions lo;
 };
 
 void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level diagLevel,
@@ -63,12 +66,7 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
     KDevelop::ProblemPointer p(new KDevelop::Problem);
     qDebug() << info.getNumRanges();
     clang::SourceLocation location(info.getLocation());
-    clang::SourceLocation endLocation(info.getLocation());
     QString bName(KUrl(sm.getBufferName(location)).toLocalFile());
-    // TODO correctly calculate range!
-    KDevelop::DocumentRange range(KDevelop::IndexedString(bName.toUtf8().constData(), bName.size()), KDevelop::SimpleRange(
-        KDevelop::SimpleCursor(sm.getSpellingLineNumber(location) - 1, sm.getSpellingColumnNumber(endLocation) - 1), 0));
-    p->setFinalLocation(range);
     p->setDescription(str);
     p->setSource(KDevelop::ProblemData::Parser);
     KDevelop::ProblemData::Severity severity;
@@ -88,6 +86,19 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
     }
     p->setSeverity(severity);
 
+    // TODO correctly calculate range!
+    if (info.getNumRanges() > 0) {
+        clang::SourceLocation begLocation(info.getRange(0).getBegin());
+        clang::SourceLocation endLocation(clang::Lexer::getLocForEndOfToken(info.getRange(0).getEnd(), 0, sm, lo));
+
+        KDevelop::DocumentRange range(KDevelop::IndexedString(bName.toUtf8().constData(), bName.size()), KDevelop::SimpleRange(KDevelop::SimpleCursor(sm.getSpellingLineNumber(begLocation) - 1, sm.getSpellingColumnNumber(begLocation) - 1),
+            KDevelop::SimpleCursor(sm.getSpellingLineNumber(endLocation) - 1, sm.getSpellingColumnNumber(endLocation) - 1)));
+        p->setFinalLocation(range);
+    } else {
+        KDevelop::DocumentRange range(KDevelop::IndexedString(bName.toUtf8().constData(), bName.size()), KDevelop::SimpleRange(KDevelop::SimpleCursor(sm.getSpellingLineNumber(location) - 1, sm.getSpellingColumnNumber(clang::Lexer::getLocForEndOfToken(location, 0, sm, lo)) - 1), 0));
+        p->setFinalLocation(range);
+    }
+
     qDebug() << "parsing error" << p->description() << p->finalLocation() << bName;
 
     KDevelop::DUChainWriteLocker lock(KDevelop::DUChain::lock());
@@ -98,7 +109,7 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
 
 clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngine &Diags) const
 {
-    return new KDevDiagnosticConsumer();
+    return new KDevDiagnosticConsumer(lo);
 }
 
 class MyASTConsumer : public clang::ASTConsumer, public clang::RecursiveASTVisitor<MyASTConsumer>
@@ -186,12 +197,6 @@ public:
 
 CLangParseJobPrivate::CLangParseJobPrivate (const QString& f) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(f)
 {
-    ci.createDiagnostics(0, 0, new KDevDiagnosticConsumer());
-
-    clang::TargetOptions to;
-    to.Triple = llvm::sys::getDefaultTargetTriple();
-    ci.setTarget(clang::TargetInfo::CreateTargetInfo(ci.getDiagnostics(), to));
-
     lo.C99 = 1;
     lo.GNUMode = 0;
     lo.GNUKeywords = 1;
@@ -199,6 +204,12 @@ CLangParseJobPrivate::CLangParseJobPrivate (const QString& f) : ci(), lo(ci.getL
     lo.CPlusPlus0x = 0;
     lo.Bool = 0;
     lo.NoBuiltin = 0;
+
+    ci.createDiagnostics(0, 0, new KDevDiagnosticConsumer(lo));
+
+    clang::TargetOptions to;
+    to.Triple = llvm::sys::getDefaultTargetTriple();
+    ci.setTarget(clang::TargetInfo::CreateTargetInfo(ci.getDiagnostics(), to));
 
     so.UseBuiltinIncludes = true;
     //so.UseStandardCXXIncludes = true;
