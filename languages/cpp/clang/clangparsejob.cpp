@@ -38,6 +38,10 @@
 #include <clang/Parse/ParseAST.h>
 
 #include <language/interfaces/iproblem.h>
+#include <language/duchain/topducontext.h>
+#include <language/duchain/duchain.h>
+#include <language/duchain/duchainutils.h>
+#include <language/duchain/duchainlock.h>
 
 class KDevDiagnosticConsumer : public clang::DiagnosticConsumer
 {
@@ -54,9 +58,42 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
     llvm::SmallVector<char, 10> out;
     info.FormatDiagnostic(out);
     
-    qDebug() << "Got diagnostic @line" << sm.getSpellingLineNumber(info.getLocation());
     QString str(QByteArray(out.data(), out.size_in_bytes()));
-    qDebug() << str;
+
+    KDevelop::ProblemPointer p(new KDevelop::Problem);
+    qDebug() << info.getNumRanges();
+    clang::SourceLocation location(info.getLocation());
+    clang::SourceLocation endLocation(info.getLocation());
+    QString bName(KUrl(sm.getBufferName(location)).toLocalFile());
+    // TODO correctly calculate range!
+    KDevelop::DocumentRange range(KDevelop::IndexedString(bName.toUtf8().constData(), bName.size()), KDevelop::SimpleRange(
+        KDevelop::SimpleCursor(sm.getSpellingLineNumber(location) - 1, sm.getSpellingColumnNumber(endLocation) - 1), 0));
+    p->setFinalLocation(range);
+    p->setDescription(str);
+    p->setSource(KDevelop::ProblemData::Parser);
+    KDevelop::ProblemData::Severity severity;
+    switch (diagLevel) {
+        case clang::DiagnosticsEngine::Ignored:
+        case clang::DiagnosticsEngine::Note:
+            severity = KDevelop::ProblemData::Hint;
+            break;
+        case clang::DiagnosticsEngine::Warning:
+            severity = KDevelop::ProblemData::Warning;
+            break;
+        case clang::DiagnosticsEngine::Error:
+        case clang::DiagnosticsEngine::Fatal:
+        default:
+            severity = KDevelop::ProblemData::Error;
+            break;
+    }
+    p->setSeverity(severity);
+
+    qDebug() << "parsing error" << p->description() << p->finalLocation() << bName;
+
+    KDevelop::DUChainWriteLocker lock(KDevelop::DUChain::lock());
+    KDevelop::ReferencedTopDUContext rTopContext(KDevelop::DUChainUtils::standardContextForUrl(KUrl(bName)));
+    rTopContext->addProblem(p);
+    lock.unlock();
 }
 
 clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngine &Diags) const
@@ -144,9 +181,10 @@ public:
     clang::CompilerInstance ci;
     clang::LangOptions &lo;
     clang::HeaderSearchOptions &so;
+    KUrl url;
 };
 
-CLangParseJobPrivate::CLangParseJobPrivate (const QString& f) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts())
+CLangParseJobPrivate::CLangParseJobPrivate (const QString& f) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(f)
 {
     ci.createDiagnostics(0, 0, new KDevDiagnosticConsumer());
 
@@ -189,6 +227,17 @@ CLangParseJobPrivate::CLangParseJobPrivate (const QString& f) : ci(), lo(ci.getL
 
 void CLangParseJobPrivate::run()
 {
+    KDevelop::DUChainWriteLocker lock(KDevelop::DUChain::lock());
+    KDevelop::ReferencedTopDUContext rTopContext(KDevelop::DUChainUtils::standardContextForUrl(url));
+    if (!rTopContext.data()) {
+        KDevelop::TopDUContext* topContext;
+        topContext = new KDevelop::TopDUContext(KDevelop::IndexedString(url.toLocalFile()), KDevelop::RangeInRevision(KDevelop::CursorInRevision(0, 0), KDevelop::CursorInRevision(1000, 0)));
+        KDevelop::DUChain::self()->addDocumentChain(topContext);
+        rTopContext = KDevelop::DUChainUtils::standardContextForUrl(url);
+    }
+    rTopContext->clearProblems();
+    lock.unlock();
+
     clang::ASTConsumer &astConsumer = ci.getASTConsumer();
     ci.getDiagnosticClient().BeginSourceFile(ci.getLangOpts(),
                                              &ci.getPreprocessor());
