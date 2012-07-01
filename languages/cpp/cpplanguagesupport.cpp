@@ -95,6 +95,7 @@
 #include "includepathcomputer.h"
 #include "codecompletion/missingincludemodel.h"
 
+#include "clang/clangparsejob.h"
 //#include <valgrind/callgrind.h>
 
 
@@ -415,7 +416,8 @@ CppLanguageSupport* CppLanguageSupport::self() {
 
 KDevelop::ParseJob *CppLanguageSupport::createParseJob( const IndexedString &url )
 {
-    return new CPPParseJob( url, this );
+    //return new CPPParseJob( url, this );
+    return new CLangParseJob( url );
 }
 
 KDevelop::ICodeHighlighting *CppLanguageSupport::codeHighlighting() const

@@ -10,6 +10,7 @@ include_directories(
 add_definitions( -DKDE_DEFAULT_DEBUG_AREA=9007 )
 
 add_subdirectory(parser)
+add_subdirectory(clang)
 add_subdirectory(cppduchain)
 add_subdirectory(tests)
 ########### next target ###############
@@ -75,6 +76,7 @@ if(BUILD_uiblocktester)
   add_definitions(-DDEBUG_UI_LOCKUP)
 endif(BUILD_uiblocktester)
 
+link_directories(/usr/lib/llvm)
 kde4_add_plugin(kdevcpplanguagesupport ${kdevcpplanguagesupport_PART_SRCS})
 target_link_libraries(kdevcpplanguagesupport
     kdev4cpprpp
@@ -86,6 +88,7 @@ target_link_libraries(kdevcpplanguagesupport
     ${KDEVPLATFORM_LANGUAGE_LIBRARIES}
     ${KDE4_KDECORE_LIBS}
     ${KDE4_KTEXTEDITOR_LIBS}
+    kdevclang
 )
 
 install(TARGETS kdevcpplanguagesupport DESTINATION ${PLUGIN_INSTALL_DIR})
