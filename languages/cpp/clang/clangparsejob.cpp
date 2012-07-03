@@ -294,20 +294,16 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
     ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(url));
     if (!rTopContext.data()) {
         qDebug() << "Creating new context!";
-        ParsingEnvironmentFile *pFile = new ParsingEnvironmentFile(parent->document());
-        pFile->setLanguage(IndexedString("CLang"));
-        TopDUContext* topContext = new TopDUContext(IndexedString(url.toLocalFile()), RangeInRevision(CursorInRevision(0, 0), CursorInRevision(INT_MAX, INT_MAX)), pFile);
-        //Cpp::EnvironmentFile *pFile = new Cpp::EnvironmentFile(parent->document(), topContext);
-        //topContext->setParsingEnvironmentFile(pFile);
+        TopDUContext* topContext = new TopDUContext(IndexedString(url.toLocalFile()), RangeInRevision(CursorInRevision(0, 0), CursorInRevision(INT_MAX, INT_MAX)));
 
         topContext->setType(DUContext::Global);
 
         DUChain::self()->addDocumentChain(topContext);
         rTopContext = DUChainUtils::standardContextForUrl(url);
+        Cpp::EnvironmentFile *pFile = new Cpp::EnvironmentFile(parent->document(), topContext);
+        DUChain::self()->updateContextEnvironment(rTopContext.data(), pFile);
     }
-    qDebug() << rTopContext->problems().size();
     rTopContext->clearProblems();
-    qDebug() << rTopContext->problems().size();
     lock.unlock();
 
     // AST parse
@@ -318,6 +314,7 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
     ci.getDiagnosticClient().EndSourceFile();
 
     CppLanguageSupport::self()->codeHighlighting()->highlightDUChain(rTopContext);
+    parent->setDuChain(rTopContext);
 }
 
 
