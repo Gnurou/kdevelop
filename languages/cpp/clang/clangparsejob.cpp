@@ -37,11 +37,20 @@
 #include <clang/Parse/Parser.h>
 #include <clang/Parse/ParseAST.h>
 
+#include <interfaces/ilanguage.h>
 #include <language/interfaces/iproblem.h>
+#include <language/interfaces/icodehighlighting.h>
+#include <language/interfaces/ilanguagesupport.h>
 #include <language/duchain/topducontext.h>
 #include <language/duchain/duchain.h>
 #include <language/duchain/duchainutils.h>
 #include <language/duchain/duchainlock.h>
+#include <language/backgroundparser/urlparselock.h>
+#include <languages/cpp/cpplanguagesupport.h>
+#include <languages/cpp/cppduchain/environmentmanager.h>
+#include <language/duchain/builders/abstractcontextbuilder.h>
+
+using namespace KDevelop;
 
 class KDevDiagnosticConsumer : public clang::DiagnosticConsumer
 {
@@ -63,25 +72,25 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
     
     QString str(QByteArray(out.data(), out.size_in_bytes()));
 
-    KDevelop::ProblemPointer p(new KDevelop::Problem);
+    ProblemPointer p(new Problem);
     qDebug() << info.getNumRanges();
     clang::SourceLocation location(info.getLocation());
     QString bName(KUrl(sm.getBufferName(location)).toLocalFile());
     p->setDescription(str);
-    p->setSource(KDevelop::ProblemData::Parser);
-    KDevelop::ProblemData::Severity severity;
+    p->setSource(ProblemData::Parser);
+    ProblemData::Severity severity;
     switch (diagLevel) {
         case clang::DiagnosticsEngine::Ignored:
         case clang::DiagnosticsEngine::Note:
-            severity = KDevelop::ProblemData::Hint;
+            severity = ProblemData::Hint;
             break;
         case clang::DiagnosticsEngine::Warning:
-            severity = KDevelop::ProblemData::Warning;
+            severity = ProblemData::Warning;
             break;
         case clang::DiagnosticsEngine::Error:
         case clang::DiagnosticsEngine::Fatal:
         default:
-            severity = KDevelop::ProblemData::Error;
+            severity = ProblemData::Error;
             break;
     }
     p->setSeverity(severity);
@@ -91,18 +100,18 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
         clang::SourceLocation begLocation(info.getRange(0).getBegin());
         clang::SourceLocation endLocation(clang::Lexer::getLocForEndOfToken(info.getRange(0).getEnd(), 0, sm, lo));
 
-        KDevelop::DocumentRange range(KDevelop::IndexedString(bName.toUtf8().constData(), bName.size()), KDevelop::SimpleRange(KDevelop::SimpleCursor(sm.getSpellingLineNumber(begLocation) - 1, sm.getSpellingColumnNumber(begLocation) - 1),
-            KDevelop::SimpleCursor(sm.getSpellingLineNumber(endLocation) - 1, sm.getSpellingColumnNumber(endLocation) - 1)));
+        DocumentRange range(IndexedString(bName.toUtf8().constData(), bName.size()), SimpleRange(SimpleCursor(sm.getSpellingLineNumber(begLocation) - 1, sm.getSpellingColumnNumber(begLocation) - 1),
+            SimpleCursor(sm.getSpellingLineNumber(endLocation) - 1, sm.getSpellingColumnNumber(endLocation) - 1)));
         p->setFinalLocation(range);
     } else {
-        KDevelop::DocumentRange range(KDevelop::IndexedString(bName.toUtf8().constData(), bName.size()), KDevelop::SimpleRange(KDevelop::SimpleCursor(sm.getSpellingLineNumber(location) - 1, sm.getSpellingColumnNumber(clang::Lexer::getLocForEndOfToken(location, 0, sm, lo)) - 1), 0));
+        DocumentRange range(IndexedString(bName.toUtf8().constData(), bName.size()), SimpleRange(SimpleCursor(sm.getSpellingLineNumber(location) - 1, sm.getSpellingColumnNumber(clang::Lexer::getLocForEndOfToken(location, 0, sm, lo)) - 1), 0));
         p->setFinalLocation(range);
     }
 
     qDebug() << "parsing error" << p->description() << p->finalLocation() << bName;
 
-    KDevelop::DUChainWriteLocker lock(KDevelop::DUChain::lock());
-    KDevelop::ReferencedTopDUContext rTopContext(KDevelop::DUChainUtils::standardContextForUrl(KUrl(bName)));
+    DUChainWriteLocker lock(DUChain::lock());
+    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl(bName)));
     rTopContext->addProblem(p);
     lock.unlock();
 }
@@ -112,9 +121,40 @@ clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngin
     return new KDevDiagnosticConsumer(lo);
 }
 
+typedef AbstractContextBuilder<clang::Decl, QString> ContextBuilderBase;
+
+class ContextBuilder : public ContextBuilderBase
+{
+public:
+    ContextBuilder() : ContextBuilderBase() {}
+
+protected:
+    virtual void startVisiting(clang::Decl* node) {}
+    virtual void setContextOnNode(clang::Decl* node, DUContext* context) {}
+    virtual DUContext* contextFromNode(clang::Decl* node) { return 0; }
+    virtual RangeInRevision editorFindRange(clang::Decl* fromNode, clang::Decl* toNode)
+    {
+        return RangeInRevision();
+    }
+    virtual QualifiedIdentifier identifierForNode(QString* node)
+    {
+        return QualifiedIdentifier();
+    }
+};
+
 class MyASTConsumer : public clang::ASTConsumer, public clang::RecursiveASTVisitor<MyASTConsumer>
 {
 private:
+    SimpleCursor toCursor(const clang::SourceLocation &sl)
+    {
+        return SimpleCursor(_sm.getSpellingLineNumber(sl) - 1, _sm.getSpellingColumnNumber(sl) - 1);
+    }
+
+    clang::SourceLocation endOf(const clang::SourceLocation &sl)
+    {
+        return clang::Lexer::getLocForEndOfToken(sl, 0, _sm, _lo);
+    }
+
     clang::SourceManager &_sm;
     clang::LangOptions _lo;
 
@@ -136,48 +176,61 @@ public:
         TraverseDecl(ctx.getTranslationUnitDecl());
     }
 
+    /**
+     * Register new type
+     */
     virtual bool VisitTypeDecl(clang::TypeDecl *decl) {
         //std::cout << "type decl " << decl->getNameAsString() << (void *)decl << std::endl;
         clang::SourceLocation location(decl->getLocation());
-        //std::cout << offsetOf(location) << " " << offsetOfEnd(location) << std::endl;
+        SimpleCursor tBegin(toCursor(decl->getLocStart()));
+        SimpleCursor tEnd(toCursor(endOf(decl->getLocEnd())));
+        SimpleCursor nBegin(toCursor(decl->getLocation()));
+        SimpleCursor nEnd(toCursor(endOf(decl->getLocation())));
+        qDebug() << "type" << decl->getNameAsString().c_str() << tBegin.line << tBegin.column << tEnd.line << tEnd.column << nBegin.line << nBegin.column << nEnd.line << nEnd.column;
+
         return clang::RecursiveASTVisitor<MyASTConsumer>::VisitTypeDecl(decl);
     }
 
+    /**
+     * Variable declaration within the current context
+     */
     virtual bool VisitVarDecl(clang::VarDecl *decl) {
-        //std::cout << "decl " << decl->getNameAsString() << (void *)decl << " " << decl->getType().getAsString() << std::endl;
-        clang::SourceLocation location(decl->getLocation());
-        //std::cout << offsetOf(location) << " " << offsetOfEnd(location) << std::endl;
+        SimpleCursor vBegin(toCursor(decl->getLocation()));
+        SimpleCursor vEnd(toCursor(endOf(decl->getLocation())));
+        qDebug() << "var" << decl->getNameAsString().c_str() << decl->getType().getAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
 
         return clang::RecursiveASTVisitor<MyASTConsumer>::VisitVarDecl(decl);
     }
 
+    /**
+     * Member access (e.g. type.member)
+     */
     virtual bool VisitMemberExpr(clang::MemberExpr *expr) {
-        //std::cout << "member " << expr->getMemberDecl()->getNameAsString() << std::endl;
         clang::SourceLocation location(expr->getMemberLoc());
-        //std::cout << offsetOf(location) << " " << offsetOfEnd(location) << std::endl;
 
         return clang::RecursiveASTVisitor<MyASTConsumer>::VisitMemberExpr(expr);
     }
 
     virtual bool VisitDeclRefExpr(clang::DeclRefExpr *expr) {
-        //std::cout << "decl ref " << expr->getDecl()->getNameAsString() << (void *)expr->getDecl() << std::endl;
         clang::SourceLocation location(expr->getLocation());
-        //std::cout << offsetOf(location) << " " << offsetOfEnd(location) << std::endl;
 
         return clang::RecursiveASTVisitor<MyASTConsumer>::VisitDeclRefExpr(expr);
     }
-/*
-    virtual bool VisitStmt(clang::Stmt *stmt) {
-        stmt->dump();
-        return clang::RecursiveASTVisitor<MyASTConsumer>::VisitStmt(stmt);
+
+    /**
+     * Build and process a new DUContext for the function
+     */
+    virtual bool TraverseFunctionDecl(clang::FunctionDecl *func) {
+        SimpleCursor fBegin(toCursor(func->getLocStart()));
+        SimpleCursor fEnd(toCursor(endOf(func->getLocEnd())));
+        qDebug() << "func" << func->getNameAsString().c_str() << fBegin.line << fBegin.column << fEnd.line << fEnd.column;
+
+        bool ret = clang::RecursiveASTVisitor<MyASTConsumer>::TraverseFunctionDecl(func);
+
+        qDebug() << "func" << func->getNameAsString().c_str() << "done!";
+        return ret;
     }
-    */
-/*
-    virtual bool VisitTypeLoc(clang::TypeLoc tloc) {
-        std::cout << "typeloc " << tloc.getType().getAsString() << std::endl;
-        return clang::RecursiveASTVisitor<MyASTConsumer>::VisitTypeLoc(tloc);
-    }
-*/
+
     virtual bool VisitValue(clang::ValueDecl *val) {
         std::cout << "value" << std::endl;
         return true;
@@ -186,8 +239,8 @@ public:
 
 class CLangParseJobPrivate {
 public:
-    CLangParseJobPrivate(const QString &f);
-    void run();
+    CLangParseJobPrivate(const KUrl &u);
+    void run(CLangParseJob *parent);
 
     clang::CompilerInstance ci;
     clang::LangOptions &lo;
@@ -195,7 +248,7 @@ public:
     KUrl url;
 };
 
-CLangParseJobPrivate::CLangParseJobPrivate (const QString& f) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(f)
+CLangParseJobPrivate::CLangParseJobPrivate (const KUrl& u) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(u)
 {
     lo.C99 = 1;
     lo.GNUMode = 0;
@@ -218,7 +271,6 @@ CLangParseJobPrivate::CLangParseJobPrivate (const QString& f) : ci(), lo(ci.getL
     so.AddPath("/usr/lib/clang/3.1/include/", clang::frontend::Angled, false, false, false);
     so.AddPath("/usr/include/", clang::frontend::Angled, false, false, false);
     so.AddPath("/usr/include/linux", clang::frontend::Angled, false, false, false);
-    //so.AddPath("/usr/include/c++/4.7.1", clang::frontend::Angled, false, false, false);
     //so.AddPath("/usr/include/c++/4.7.1/tr1", clang::frontend::Angled, false, false, false);
     //so.AddPath("/usr/include/c++/4.7.1/x86_64-unknown-linux-gnu", clang::frontend::Angled, false, false, false);
 
@@ -232,34 +284,46 @@ CLangParseJobPrivate::CLangParseJobPrivate (const QString& f) : ci(), lo(ci.getL
     clang::ASTConsumer *astConsumer = new MyASTConsumer(ci.getSourceManager(), lo);
     ci.setASTConsumer(astConsumer);
 
-    const clang::FileEntry *pFile = ci.getFileManager().getFile(f.toUtf8().constData());
+    const clang::FileEntry *pFile = ci.getFileManager().getFile(url.toLocalFile().toUtf8().constData());
     ci.getSourceManager().createMainFileID(pFile);
 }
 
-void CLangParseJobPrivate::run()
+void CLangParseJobPrivate::run(CLangParseJob* parent)
 {
-    KDevelop::DUChainWriteLocker lock(KDevelop::DUChain::lock());
-    KDevelop::ReferencedTopDUContext rTopContext(KDevelop::DUChainUtils::standardContextForUrl(url));
+    DUChainWriteLocker lock(DUChain::lock());
+    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(url));
     if (!rTopContext.data()) {
-        KDevelop::TopDUContext* topContext;
-        topContext = new KDevelop::TopDUContext(KDevelop::IndexedString(url.toLocalFile()), KDevelop::RangeInRevision(KDevelop::CursorInRevision(0, 0), KDevelop::CursorInRevision(1000, 0)));
-        KDevelop::DUChain::self()->addDocumentChain(topContext);
-        rTopContext = KDevelop::DUChainUtils::standardContextForUrl(url);
+        qDebug() << "Creating new context!";
+        ParsingEnvironmentFile *pFile = new ParsingEnvironmentFile(parent->document());
+        pFile->setLanguage(IndexedString("CLang"));
+        TopDUContext* topContext = new TopDUContext(IndexedString(url.toLocalFile()), RangeInRevision(CursorInRevision(0, 0), CursorInRevision(INT_MAX, INT_MAX)), pFile);
+        //Cpp::EnvironmentFile *pFile = new Cpp::EnvironmentFile(parent->document(), topContext);
+        //topContext->setParsingEnvironmentFile(pFile);
+
+        topContext->setType(DUContext::Global);
+
+        DUChain::self()->addDocumentChain(topContext);
+        rTopContext = DUChainUtils::standardContextForUrl(url);
     }
+    qDebug() << rTopContext->problems().size();
     rTopContext->clearProblems();
+    qDebug() << rTopContext->problems().size();
     lock.unlock();
 
+    // AST parse
     clang::ASTConsumer &astConsumer = ci.getASTConsumer();
     ci.getDiagnosticClient().BeginSourceFile(ci.getLangOpts(),
                                              &ci.getPreprocessor());
     clang::ParseAST(ci.getPreprocessor(), &astConsumer, ci.getASTContext());
     ci.getDiagnosticClient().EndSourceFile();
+
+    CppLanguageSupport::self()->codeHighlighting()->highlightDUChain(rTopContext);
 }
 
 
 CLangParseJob::CLangParseJob (const KUrl& url) : ParseJob (url)
 {
-    d = new CLangParseJobPrivate(url.toLocalFile());
+    d = new CLangParseJobPrivate(url);
     qDebug() << "CLANG OK!";
 }
 
@@ -271,8 +335,18 @@ CLangParseJob::~CLangParseJob()
 
 void CLangParseJob::run()
 {
-    d->run();
-}
+    qDebug() << "CLANG PARSE BEGIN" << d->url;
 
+    UrlParseLock urlLock(document());
+
+    readContents();
+
+    qDebug() << "MODIFICATION:" << contents().modification;
+
+    if (abortRequested())
+        return abortJob();
+
+    d->run(this);
+}
 
 #include "clangparsejob.moc"
