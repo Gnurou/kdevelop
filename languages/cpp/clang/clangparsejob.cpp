@@ -49,6 +49,8 @@
 #include <languages/cpp/cpplanguagesupport.h>
 #include <languages/cpp/cppduchain/environmentmanager.h>
 #include <language/duchain/builders/abstractcontextbuilder.h>
+#include <language/duchain/builders/abstracttypebuilder.h>
+#include <language/duchain/builders/abstractdeclarationbuilder.h>
 
 using namespace KDevelop;
 
@@ -121,121 +123,149 @@ clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngin
     return new KDevDiagnosticConsumer(lo);
 }
 
-typedef AbstractContextBuilder<clang::Decl, QString> ContextBuilderBase;
-
-class ContextBuilder : public ContextBuilderBase
+class CLangContextBuilder : public AbstractContextBuilder<clang::Decl, clang::NamedDecl>
 {
 public:
-    ContextBuilder() : ContextBuilderBase() {}
+    CLangContextBuilder() {}
+    CLangContextBuilder(clang::SourceManager &sm, clang::LangOptions &lo) : _sm(&sm), _lo(lo) { }
 
-protected:
-    virtual void startVisiting(clang::Decl* node) {}
-    virtual void setContextOnNode(clang::Decl* node, DUContext* context) {}
-    virtual DUContext* contextFromNode(clang::Decl* node) { return 0; }
-    virtual RangeInRevision editorFindRange(clang::Decl* fromNode, clang::Decl* toNode)
-    {
-        return RangeInRevision();
-    }
-    virtual QualifiedIdentifier identifierForNode(QString* node)
-    {
-        return QualifiedIdentifier();
-    }
-};
+    virtual ~CLangContextBuilder() { }
 
-class MyASTConsumer : public clang::ASTConsumer, public clang::RecursiveASTVisitor<MyASTConsumer>
-{
-private:
-    SimpleCursor toCursor(const clang::SourceLocation &sl)
+    CursorInRevision toCursor(const clang::SourceLocation &sl)
     {
-        return SimpleCursor(_sm.getSpellingLineNumber(sl) - 1, _sm.getSpellingColumnNumber(sl) - 1);
+        return CursorInRevision(_sm->getSpellingLineNumber(sl) - 1, _sm->getSpellingColumnNumber(sl) - 1);
     }
 
     clang::SourceLocation endOf(const clang::SourceLocation &sl)
     {
-        return clang::Lexer::getLocForEndOfToken(sl, 0, _sm, _lo);
+        return clang::Lexer::getLocForEndOfToken(sl, 0, *_sm, _lo);
     }
 
-    clang::SourceManager &_sm;
+    virtual void startVisiting(clang::Decl* node) {}
+
+    virtual void setContextOnNode(clang::Decl* node, DUContext* context)
+    {
+        declMap[node] = context;
+    }
+
+    virtual DUContext* contextFromNode(clang::Decl* node)
+    {
+        if (!declMap.contains(node)) return 0;
+        else return declMap[node];
+    }
+
+    virtual RangeInRevision editorFindRange(clang::Decl* fromNode, clang::Decl* toNode)
+    {
+        CursorInRevision fBegin(toCursor(fromNode->getLocStart()));
+        CursorInRevision fEnd(toCursor(endOf(toNode->getLocEnd())));
+        return RangeInRevision(fBegin, fEnd);
+    }
+
+    virtual QualifiedIdentifier identifierForNode(clang::NamedDecl* node)
+    {
+        if (!node) return QualifiedIdentifier();
+        else return QualifiedIdentifier(QString(node->getQualifiedNameAsString().c_str()));
+    }
+
+protected:
+    QMap<clang::Decl *, DUContext *> declMap;
+    clang::SourceManager *_sm;
     clang::LangOptions _lo;
+};
 
-    int offsetOf(const clang::SourceLocation &s) const
-    {
-        return _sm.getFileOffset(s);
-    }
-
-    int offsetOfEnd(const clang::SourceLocation &s) const
-    {
-        return _sm.getFileOffset(clang::Lexer::getLocForEndOfToken(s, 0, _sm, _lo));
-    }
-
+class CLangDeclBuilder :
+    public AbstractDeclarationBuilder<clang::Decl, clang::NamedDecl, CLangContextBuilder>,
+    public clang::ASTConsumer, public clang::RecursiveASTVisitor<CLangDeclBuilder>
+{
 public:
-    MyASTConsumer(clang::SourceManager &sm, clang::LangOptions &lo) : clang::ASTConsumer(), _sm(sm), _lo(lo) { }
-    virtual ~MyASTConsumer() { }
+    CLangDeclBuilder(clang::SourceManager &sm, clang::LangOptions &lo) { _sm = &sm; lo = _lo; }
+    virtual ~CLangDeclBuilder() { }
 
     virtual void HandleTranslationUnit(clang::ASTContext &ctx) {
         TraverseDecl(ctx.getTranslationUnitDecl());
     }
 
-    /**
-     * Register new type
-     */
-    virtual bool VisitTypeDecl(clang::TypeDecl *decl) {
-        //std::cout << "type decl " << decl->getNameAsString() << (void *)decl << std::endl;
-        clang::SourceLocation location(decl->getLocation());
-        SimpleCursor tBegin(toCursor(decl->getLocStart()));
-        SimpleCursor tEnd(toCursor(endOf(decl->getLocEnd())));
-        SimpleCursor nBegin(toCursor(decl->getLocation()));
-        SimpleCursor nEnd(toCursor(endOf(decl->getLocation())));
-        qDebug() << "type" << decl->getNameAsString().c_str() << tBegin.line << tBegin.column << tEnd.line << tEnd.column << nBegin.line << nBegin.column << nEnd.line << nEnd.column;
-
-        return clang::RecursiveASTVisitor<MyASTConsumer>::VisitTypeDecl(decl);
-    }
-
-    /**
-     * Variable declaration within the current context
-     */
-    virtual bool VisitVarDecl(clang::VarDecl *decl) {
-        SimpleCursor vBegin(toCursor(decl->getLocation()));
-        SimpleCursor vEnd(toCursor(endOf(decl->getLocation())));
-        qDebug() << "var" << decl->getNameAsString().c_str() << decl->getType().getAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
-
-        return clang::RecursiveASTVisitor<MyASTConsumer>::VisitVarDecl(decl);
-    }
-
-    /**
-     * Member access (e.g. type.member)
-     */
-    virtual bool VisitMemberExpr(clang::MemberExpr *expr) {
-        clang::SourceLocation location(expr->getMemberLoc());
-
-        return clang::RecursiveASTVisitor<MyASTConsumer>::VisitMemberExpr(expr);
-    }
-
-    virtual bool VisitDeclRefExpr(clang::DeclRefExpr *expr) {
-        clang::SourceLocation location(expr->getLocation());
-
-        return clang::RecursiveASTVisitor<MyASTConsumer>::VisitDeclRefExpr(expr);
-    }
-
-    /**
-     * Build and process a new DUContext for the function
-     */
-    virtual bool TraverseFunctionDecl(clang::FunctionDecl *func) {
-        SimpleCursor fBegin(toCursor(func->getLocStart()));
-        SimpleCursor fEnd(toCursor(endOf(func->getLocEnd())));
-        qDebug() << "func" << func->getNameAsString().c_str() << fBegin.line << fBegin.column << fEnd.line << fEnd.column;
-
-        bool ret = clang::RecursiveASTVisitor<MyASTConsumer>::TraverseFunctionDecl(func);
-
-        qDebug() << "func" << func->getNameAsString().c_str() << "done!";
-        return ret;
-    }
-
-    virtual bool VisitValue(clang::ValueDecl *val) {
-        std::cout << "value" << std::endl;
-        return true;
-    }
+    virtual bool VisitTypeDecl(clang::TypeDecl *decl);
+    virtual bool VisitVarDecl(clang::VarDecl *decl);
+    virtual bool VisitMemberExpr(clang::MemberExpr *expr);
+    virtual bool VisitDeclRefExpr(clang::DeclRefExpr *expr);
+    virtual bool TraverseFunctionDecl(clang::FunctionDecl *func);
+    virtual bool VisitValue(clang::ValueDecl *val);
 };
+
+/**
+ * Register new type
+ */
+bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl) {
+    clang::SourceLocation location(decl->getLocation());
+    CursorInRevision tBegin(toCursor(decl->getLocStart()));
+    CursorInRevision tEnd(toCursor(endOf(decl->getLocEnd())));
+    CursorInRevision nBegin(toCursor(decl->getLocation()));
+    CursorInRevision nEnd(toCursor(endOf(decl->getLocation())));
+    qDebug() << "type" << decl->getNameAsString().c_str() << tBegin.line << tBegin.column << tEnd.line << tEnd.column << nBegin.line << nBegin.column << nEnd.line << nEnd.column;
+
+    return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitTypeDecl(decl);
+}
+
+/**
+ * Variable declaration within the current context
+ */
+bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl) {
+    CursorInRevision vBegin(toCursor(decl->getLocation()));
+    CursorInRevision vEnd(toCursor(endOf(decl->getLocation())));
+    qDebug() << "var" << decl->getNameAsString().c_str() << decl->getType().getAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
+
+    return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitVarDecl(decl);
+}
+
+/**
+ * Member access (e.g. type.member)
+ */
+bool CLangDeclBuilder::VisitMemberExpr(clang::MemberExpr *expr) {
+    clang::SourceLocation location(expr->getMemberLoc());
+
+    return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitMemberExpr(expr);
+}
+
+bool CLangDeclBuilder::VisitDeclRefExpr(clang::DeclRefExpr *expr) {
+    clang::SourceLocation location(expr->getLocation());
+
+    return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitDeclRefExpr(expr);
+}
+
+/**
+ * Build and process a new DUContext for the function
+ */
+bool CLangDeclBuilder::TraverseFunctionDecl(clang::FunctionDecl *func) {
+    CursorInRevision fBegin(toCursor(func->getLocStart()));
+    CursorInRevision fEnd(toCursor(endOf(func->getLocEnd())));
+    qDebug() << "func" << func->getNameAsString().c_str() << fBegin.line << fBegin.column << fEnd.line << fEnd.column;
+    qDebug() << "opening context";
+    // TODO if is definition, should pass in 3rd arg
+    // TODO there is no top context??
+    FunctionDeclaration *fdecl = openDeclaration<FunctionDeclaration>(0, func);
+    openContext(func, DUContext::Function, func);
+
+    bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::TraverseFunctionDecl(func);
+
+    qDebug() << "closing context";
+    closeContext();
+    closeDeclaration();
+    qDebug() << "func" << func->getNameAsString().c_str() << "done!";
+    return ret;
+}
+
+bool CLangDeclBuilder::VisitValue(clang::ValueDecl *val) {
+    std::cout << "value" << std::endl;
+    return true;
+}
+
+
+
+
+
+
+
 
 class CLangParseJobPrivate {
 public:
@@ -281,7 +311,7 @@ CLangParseJobPrivate::CLangParseJobPrivate (const KUrl& u) : ci(), lo(ci.getLang
 
     ci.getPreprocessorOpts().UsePredefines = true;
 
-    clang::ASTConsumer *astConsumer = new MyASTConsumer(ci.getSourceManager(), lo);
+    clang::ASTConsumer *astConsumer = new CLangDeclBuilder(ci.getSourceManager(), lo);
     ci.setASTConsumer(astConsumer);
 
     const clang::FileEntry *pFile = ci.getFileManager().getFile(url.toLocalFile().toUtf8().constData());
