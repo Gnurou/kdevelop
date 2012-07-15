@@ -114,7 +114,8 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
 
     DUChainWriteLocker lock(DUChain::lock());
     ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl(bName)));
-    rTopContext->addProblem(p);
+    if (rTopContext) rTopContext->addProblem(p);
+    else qDebug() << "No top context to report error to!";
     lock.unlock();
 }
 
@@ -140,8 +141,6 @@ public:
     {
         return clang::Lexer::getLocForEndOfToken(sl, 0, *_sm, _lo);
     }
-
-    virtual void startVisiting(clang::Decl* node) {}
 
     virtual void setContextOnNode(clang::Decl* node, DUContext* context)
     {
@@ -178,11 +177,20 @@ class CLangDeclBuilder :
     public clang::ASTConsumer, public clang::RecursiveASTVisitor<CLangDeclBuilder>
 {
 public:
-    CLangDeclBuilder(clang::SourceManager &sm, clang::LangOptions &lo) { _sm = &sm; lo = _lo; }
+    CLangDeclBuilder(const KUrl &url, clang::SourceManager &sm, clang::LangOptions &lo) : _url(url) { _sm = &sm; lo = _lo; }
     virtual ~CLangDeclBuilder() { }
 
     virtual void HandleTranslationUnit(clang::ASTContext &ctx) {
-        TraverseDecl(ctx.getTranslationUnitDecl());
+        clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
+        qDebug() << "Start parsing" << _url.toLocalFile();
+        build(IndexedString(_url.toLocalFile()), tuDecl);
+    }
+
+    /// Should only be called once on the root node
+    virtual void startVisiting(clang::Decl* node)
+    {
+        qDebug() << "startVisiting called!\n";
+        TraverseDecl(node);
     }
 
     virtual bool VisitTypeDecl(clang::TypeDecl *decl);
@@ -191,6 +199,13 @@ public:
     virtual bool VisitDeclRefExpr(clang::DeclRefExpr *expr);
     virtual bool TraverseFunctionDecl(clang::FunctionDecl *func);
     virtual bool VisitValue(clang::ValueDecl *val);
+
+private:
+    KUrl _url;
+};
+
+class CLangUsesBuilder
+{
 };
 
 /**
@@ -213,9 +228,16 @@ bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl) {
 bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl) {
     CursorInRevision vBegin(toCursor(decl->getLocation()));
     CursorInRevision vEnd(toCursor(endOf(decl->getLocation())));
+    RangeInRevision nRange(vBegin, vEnd);
     qDebug() << "var" << decl->getNameAsString().c_str() << decl->getType().getAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
 
+    DUChainWriteLocker lock(DUChain::lock());
+    openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange);
+    lock.unlock();
+
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitVarDecl(decl);
+
+    closeDeclaration();
 }
 
 /**
@@ -239,11 +261,18 @@ bool CLangDeclBuilder::VisitDeclRefExpr(clang::DeclRefExpr *expr) {
 bool CLangDeclBuilder::TraverseFunctionDecl(clang::FunctionDecl *func) {
     CursorInRevision fBegin(toCursor(func->getLocStart()));
     CursorInRevision fEnd(toCursor(endOf(func->getLocEnd())));
+    CursorInRevision nBegin(toCursor(func->getLocation()));
+    CursorInRevision nEnd(toCursor(endOf(func->getLocation())));
+    RangeInRevision nRange(nBegin, nEnd);
     qDebug() << "func" << func->getNameAsString().c_str() << fBegin.line << fBegin.column << fEnd.line << fEnd.column;
     qDebug() << "opening context";
     // TODO if is definition, should pass in 3rd arg
-    // TODO there is no top context??
-    FunctionDeclaration *fdecl = openDeclaration<FunctionDeclaration>(0, func);
+    //FunctionDeclaration *fdecl = openDeclaration<FunctionDeclaration>(func, func);
+    
+    DUChainWriteLocker lock(DUChain::lock());
+    FunctionDeclaration *fdecl = openDeclaration<FunctionDeclaration>(QualifiedIdentifier(func->getQualifiedNameAsString().c_str()), nRange);
+    lock.unlock();
+
     openContext(func, DUContext::Function, func);
 
     bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::TraverseFunctionDecl(func);
@@ -311,7 +340,7 @@ CLangParseJobPrivate::CLangParseJobPrivate (const KUrl& u) : ci(), lo(ci.getLang
 
     ci.getPreprocessorOpts().UsePredefines = true;
 
-    clang::ASTConsumer *astConsumer = new CLangDeclBuilder(ci.getSourceManager(), lo);
+    clang::ASTConsumer *astConsumer = new CLangDeclBuilder(u, ci.getSourceManager(), lo);
     ci.setASTConsumer(astConsumer);
 
     const clang::FileEntry *pFile = ci.getFileManager().getFile(url.toLocalFile().toUtf8().constData());
@@ -320,6 +349,7 @@ CLangParseJobPrivate::CLangParseJobPrivate (const KUrl& u) : ci(), lo(ci.getLang
 
 void CLangParseJobPrivate::run(CLangParseJob* parent)
 {
+    /*
     DUChainWriteLocker lock(DUChain::lock());
     ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(url));
     if (!rTopContext.data()) {
@@ -335,6 +365,7 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
     }
     rTopContext->clearProblems();
     lock.unlock();
+    */
 
     // AST parse
     clang::ASTConsumer &astConsumer = ci.getASTConsumer();
@@ -343,8 +374,9 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
     clang::ParseAST(ci.getPreprocessor(), &astConsumer, ci.getASTContext());
     ci.getDiagnosticClient().EndSourceFile();
 
+    /*
     CppLanguageSupport::self()->codeHighlighting()->highlightDUChain(rTopContext);
-    parent->setDuChain(rTopContext);
+    parent->setDuChain(rTopContext);*/
 }
 
 
