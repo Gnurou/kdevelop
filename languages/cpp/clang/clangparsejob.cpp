@@ -51,6 +51,7 @@
 #include <language/duchain/builders/abstractcontextbuilder.h>
 #include <language/duchain/builders/abstracttypebuilder.h>
 #include <language/duchain/builders/abstractdeclarationbuilder.h>
+#include <language/duchain/builders/abstractusebuilder.h>
 
 using namespace KDevelop;
 
@@ -124,6 +125,9 @@ clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngin
     return new KDevDiagnosticConsumer(lo);
 }
 
+/* TODO horrible. But easiest way for now to share between declarations and uses builders */
+QMap<clang::Decl *, DUContext *> declMap;
+
 class CLangContextBuilder : public AbstractContextBuilder<clang::Decl, clang::NamedDecl>
 {
 public:
@@ -167,7 +171,7 @@ public:
     }
 
 protected:
-    QMap<clang::Decl *, DUContext *> declMap;
+    KUrl _url;
     clang::SourceManager *_sm;
     clang::LangOptions _lo;
 };
@@ -177,10 +181,11 @@ class CLangDeclBuilder :
     public clang::ASTConsumer, public clang::RecursiveASTVisitor<CLangDeclBuilder>
 {
 public:
-    CLangDeclBuilder(const KUrl &url, clang::SourceManager &sm, clang::LangOptions &lo) : _url(url) { _sm = &sm; lo = _lo; }
+    CLangDeclBuilder(const KUrl &url, clang::SourceManager &sm, clang::LangOptions &lo) { _url = url; _sm = &sm; lo = _lo; }
     virtual ~CLangDeclBuilder() { }
 
-    virtual void HandleTranslationUnit(clang::ASTContext &ctx) {
+    virtual void HandleTranslationUnit(clang::ASTContext &ctx)
+    {
         clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
         qDebug() << "Start parsing" << _url.toLocalFile();
         build(IndexedString(_url.toLocalFile()), tuDecl);
@@ -199,13 +204,29 @@ public:
     virtual bool VisitDeclRefExpr(clang::DeclRefExpr *expr);
     virtual bool TraverseFunctionDecl(clang::FunctionDecl *func);
     virtual bool VisitValue(clang::ValueDecl *val);
-
-private:
-    KUrl _url;
 };
 
-class CLangUsesBuilder
+class CLangUsesBuilder :
+    public AbstractUseBuilder<clang::Decl, clang::NamedDecl, CLangContextBuilder>,
+    public clang::ASTConsumer, public clang::RecursiveASTVisitor<CLangDeclBuilder>
 {
+public:
+    CLangUsesBuilder(const KUrl &url, clang::SourceManager &sm, clang::LangOptions &lo) { _url = url; _sm = &sm; lo = _lo; }
+    virtual ~CLangUsesBuilder() { }
+
+    virtual void HandleTranslationUnit(clang::ASTContext &ctx)
+    {
+        clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
+        qDebug() << "Start parsing" << _url.toLocalFile() << "for uses";
+        buildUses(tuDecl);
+    }
+
+    /// Should only be called once on the root node
+    virtual void startVisiting(clang::Decl* node)
+    {
+        qDebug() << "startVisiting for uses called!\n";
+        TraverseDecl(node);
+    }
 };
 
 /**
