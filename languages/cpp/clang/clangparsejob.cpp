@@ -148,11 +148,13 @@ public:
 
     virtual void setContextOnNode(clang::Decl* node, DUContext* context)
     {
+        qDebug() << "setContextOnNode" << node;
         declMap[node] = context;
     }
 
     virtual DUContext* contextFromNode(clang::Decl* node)
     {
+        qDebug() << "contextFromNode" << node << declMap.contains(node);
         if (!declMap.contains(node)) return 0;
         else return declMap[node];
     }
@@ -206,33 +208,11 @@ public:
     virtual bool VisitValue(clang::ValueDecl *val);
 };
 
-class CLangUsesBuilder :
-    public AbstractUseBuilder<clang::Decl, clang::NamedDecl, CLangContextBuilder>,
-    public clang::ASTConsumer, public clang::RecursiveASTVisitor<CLangDeclBuilder>
-{
-public:
-    CLangUsesBuilder(const KUrl &url, clang::SourceManager &sm, clang::LangOptions &lo) { _url = url; _sm = &sm; lo = _lo; }
-    virtual ~CLangUsesBuilder() { }
-
-    virtual void HandleTranslationUnit(clang::ASTContext &ctx)
-    {
-        clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
-        qDebug() << "Start parsing" << _url.toLocalFile() << "for uses";
-        buildUses(tuDecl);
-    }
-
-    /// Should only be called once on the root node
-    virtual void startVisiting(clang::Decl* node)
-    {
-        qDebug() << "startVisiting for uses called!\n";
-        TraverseDecl(node);
-    }
-};
-
 /**
  * Register new type
  */
-bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl) {
+bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl)
+{
     clang::SourceLocation location(decl->getLocation());
     CursorInRevision tBegin(toCursor(decl->getLocStart()));
     CursorInRevision tEnd(toCursor(endOf(decl->getLocEnd())));
@@ -246,32 +226,53 @@ bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl) {
 /**
  * Variable declaration within the current context
  */
-bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl) {
+bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
+{
     CursorInRevision vBegin(toCursor(decl->getLocation()));
     CursorInRevision vEnd(toCursor(endOf(decl->getLocation())));
     RangeInRevision nRange(vBegin, vEnd);
     qDebug() << "var" << decl->getNameAsString().c_str() << decl->getType().getAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
 
     DUChainWriteLocker lock(DUChain::lock());
-    openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange);
+    DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange, DeclarationIsDefinition));
+    //currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
     lock.unlock();
 
-    return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitVarDecl(decl);
+    bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitVarDecl(decl);
 
     closeDeclaration();
+    return ret;
 }
 
 /**
  * Member access (e.g. type.member)
  */
-bool CLangDeclBuilder::VisitMemberExpr(clang::MemberExpr *expr) {
+bool CLangDeclBuilder::VisitMemberExpr(clang::MemberExpr *expr)
+{
     clang::SourceLocation location(expr->getMemberLoc());
 
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitMemberExpr(expr);
 }
 
-bool CLangDeclBuilder::VisitDeclRefExpr(clang::DeclRefExpr *expr) {
-    clang::SourceLocation location(expr->getLocation());
+bool CLangDeclBuilder::VisitDeclRefExpr(clang::DeclRefExpr *expr)
+{
+    CursorInRevision vBegin(toCursor(expr->getLocation()));
+    CursorInRevision vEnd(toCursor(endOf(expr->getLocation())));
+    RangeInRevision nRange(vBegin, vEnd);
+    clang::Decl *decl = expr->getDecl();
+
+    if (decl->classofKind(clang::Decl::Var)) {
+        clang::VarDecl *vDecl = static_cast<clang::VarDecl *>(decl);
+        qDebug() << "decl ref" << vDecl->getNameAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
+        RangeInRevision dRange(toCursor(vDecl->getLocation()), toCursor(endOf(vDecl->getLocation())));
+        DUChainWriteLocker lock(DUChain::lock());
+        DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(vDecl->getQualifiedNameAsString().c_str()), dRange, DeclarationIsDefinition));
+        currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
+        lock.unlock();
+        closeDeclaration();
+    } else {
+        qDebug() << "decl ref" << decl->getDeclKindName();
+    }
 
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitDeclRefExpr(expr);
 }
@@ -279,7 +280,8 @@ bool CLangDeclBuilder::VisitDeclRefExpr(clang::DeclRefExpr *expr) {
 /**
  * Build and process a new DUContext for the function
  */
-bool CLangDeclBuilder::TraverseFunctionDecl(clang::FunctionDecl *func) {
+bool CLangDeclBuilder::TraverseFunctionDecl(clang::FunctionDecl *func)
+{
     CursorInRevision fBegin(toCursor(func->getLocStart()));
     CursorInRevision fEnd(toCursor(endOf(func->getLocEnd())));
     CursorInRevision nBegin(toCursor(func->getLocation()));
@@ -305,11 +307,11 @@ bool CLangDeclBuilder::TraverseFunctionDecl(clang::FunctionDecl *func) {
     return ret;
 }
 
-bool CLangDeclBuilder::VisitValue(clang::ValueDecl *val) {
+bool CLangDeclBuilder::VisitValue(clang::ValueDecl *val)
+{
     std::cout << "value" << std::endl;
     return true;
 }
-
 
 
 
@@ -361,9 +363,6 @@ CLangParseJobPrivate::CLangParseJobPrivate (const KUrl& u) : ci(), lo(ci.getLang
 
     ci.getPreprocessorOpts().UsePredefines = true;
 
-    clang::ASTConsumer *astConsumer = new CLangDeclBuilder(u, ci.getSourceManager(), lo);
-    ci.setASTConsumer(astConsumer);
-
     const clang::FileEntry *pFile = ci.getFileManager().getFile(url.toLocalFile().toUtf8().constData());
     ci.getSourceManager().createMainFileID(pFile);
 }
@@ -389,10 +388,11 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
     */
 
     // AST parse
-    clang::ASTConsumer &astConsumer = ci.getASTConsumer();
+    clang::ASTConsumer *astConsumer = new CLangDeclBuilder(url, ci.getSourceManager(), lo);
+
     ci.getDiagnosticClient().BeginSourceFile(ci.getLangOpts(),
                                              &ci.getPreprocessor());
-    clang::ParseAST(ci.getPreprocessor(), &astConsumer, ci.getASTContext());
+    clang::ParseAST(ci.getPreprocessor(), astConsumer, ci.getASTContext());
     ci.getDiagnosticClient().EndSourceFile();
 
     /*
