@@ -364,6 +364,11 @@ CLangParseJobPrivate::CLangParseJobPrivate (const KUrl& u) : ci(), lo(ci.getLang
     ci.getPreprocessorOpts().UsePredefines = true;
 
     const clang::FileEntry *pFile = ci.getFileManager().getFile(url.toLocalFile().toUtf8().constData());
+    // TODO create MemoryBuffer from file already loaded in KDevelop. See line 534 of cppparsejob.cpp, isOpenInEditor. Tracker allows to get the document.
+    // ICore::self()->languageController()->backgroundParser()->trackerForUrl(document())
+    // tracker->document->text()
+    // Then:
+    // ci.getSourceManager().setMainFileID(ci.getSourceManager().createFileIDForMemBuffer())
     ci.getSourceManager().createMainFileID(pFile);
 }
 
