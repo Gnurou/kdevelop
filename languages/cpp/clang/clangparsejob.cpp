@@ -227,6 +227,8 @@ bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl)
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitTypeDecl(decl);
 }
 
+QMap<clang::Decl *, DeclarationPointer> clangDecl2kdevDecl;
+
 /**
  * Variable declaration within the current context
  */
@@ -239,6 +241,7 @@ bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
 
     DUChainWriteLocker lock(DUChain::lock());
     DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange, DeclarationIsDefinition));
+    clangDecl2kdevDecl[decl] = kDecl;
     //currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
     lock.unlock();
 
@@ -270,10 +273,11 @@ bool CLangDeclBuilder::VisitDeclRefExpr(clang::DeclRefExpr *expr)
         qDebug() << "decl ref" << vDecl->getNameAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
         RangeInRevision dRange(toCursor(vDecl->getLocation()), toCursor(endOf(vDecl->getLocation())));
         DUChainWriteLocker lock(DUChain::lock());
-        DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(vDecl->getQualifiedNameAsString().c_str()), dRange, DeclarationIsDefinition));
+        //DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(vDecl->getQualifiedNameAsString().c_str()), dRange, DeclarationIsDefinition));
+        DeclarationPointer kDecl(clangDecl2kdevDecl[decl]);
         currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
         lock.unlock();
-        closeDeclaration();
+        //closeDeclaration();
     } else {
         qDebug() << "decl ref" << decl->getDeclKindName();
     }
