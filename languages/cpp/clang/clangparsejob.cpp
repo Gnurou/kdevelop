@@ -22,6 +22,7 @@
 #include "clangparsejob.h"
 
 #include <llvm/Support/Host.h>
+#include <llvm/Support/MemoryBuffer.h>
 
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Frontend/HeaderSearchOptions.h>
@@ -37,7 +38,10 @@
 #include <clang/Parse/Parser.h>
 #include <clang/Parse/ParseAST.h>
 
+#include <interfaces/icore.h>
 #include <interfaces/ilanguage.h>
+#include <interfaces/ilanguagecontroller.h>
+#include <language/backgroundparser/backgroundparser.h>
 #include <language/interfaces/iproblem.h>
 #include <language/interfaces/icodehighlighting.h>
 #include <language/interfaces/ilanguagesupport.h>
@@ -173,7 +177,7 @@ public:
     }
 
 protected:
-    KUrl _url;
+    IndexedString _url;
     clang::SourceManager *_sm;
     clang::LangOptions _lo;
 };
@@ -183,14 +187,14 @@ class CLangDeclBuilder :
     public clang::ASTConsumer, public clang::RecursiveASTVisitor<CLangDeclBuilder>
 {
 public:
-    CLangDeclBuilder(const KUrl &url, clang::SourceManager &sm, clang::LangOptions &lo) { _url = url; _sm = &sm; lo = _lo; }
+    CLangDeclBuilder(const IndexedString &url, clang::SourceManager &sm, clang::LangOptions &lo) { _url = url; _sm = &sm; lo = _lo; }
     virtual ~CLangDeclBuilder() { }
 
     virtual void HandleTranslationUnit(clang::ASTContext &ctx)
     {
         clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
-        qDebug() << "Start parsing" << _url.toLocalFile();
-        build(IndexedString(_url.toLocalFile()), tuDecl);
+        qDebug() << "Start parsing" << _url.c_str();
+        build(_url, tuDecl);
     }
 
     /// Should only be called once on the root node
@@ -321,16 +325,16 @@ bool CLangDeclBuilder::VisitValue(clang::ValueDecl *val)
 
 class CLangParseJobPrivate {
 public:
-    CLangParseJobPrivate(const KUrl &u);
+    CLangParseJobPrivate(const IndexedString &u);
     void run(CLangParseJob *parent);
 
     clang::CompilerInstance ci;
     clang::LangOptions &lo;
     clang::HeaderSearchOptions &so;
-    KUrl url;
+    IndexedString url;
 };
 
-CLangParseJobPrivate::CLangParseJobPrivate (const KUrl& u) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(u)
+CLangParseJobPrivate::CLangParseJobPrivate (const IndexedString& u) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(u)
 {
     lo.C99 = 1;
     lo.GNUMode = 0;
@@ -363,13 +367,16 @@ CLangParseJobPrivate::CLangParseJobPrivate (const KUrl& u) : ci(), lo(ci.getLang
 
     ci.getPreprocessorOpts().UsePredefines = true;
 
-    const clang::FileEntry *pFile = ci.getFileManager().getFile(url.toLocalFile().toUtf8().constData());
-    // TODO create MemoryBuffer from file already loaded in KDevelop. See line 534 of cppparsejob.cpp, isOpenInEditor. Tracker allows to get the document.
-    // ICore::self()->languageController()->backgroundParser()->trackerForUrl(document())
-    // tracker->document->text()
-    // Then:
-    // ci.getSourceManager().setMainFileID(ci.getSourceManager().createFileIDForMemBuffer())
-    ci.getSourceManager().createMainFileID(pFile);
+    // TODO get foreground lock as per DocumentChangeTracker doc?
+    DocumentChangeTracker *tracker = ICore::self()->languageController()->backgroundParser()->trackerForUrl(url);
+    if (tracker) {
+        llvm::MemoryBuffer *buffer = llvm::MemoryBuffer::getMemBufferCopy(tracker->document()->text().toUtf8().constData());
+        qDebug() << "current document:" << buffer->getBuffer().data();
+        ci.getSourceManager().setMainFileID(ci.getSourceManager().createFileIDForMemBuffer(buffer));
+    } else {
+        const clang::FileEntry *pFile = ci.getFileManager().getFile(url.c_str());
+        ci.getSourceManager().createMainFileID(pFile);
+    }
 }
 
 void CLangParseJobPrivate::run(CLangParseJob* parent)
@@ -393,6 +400,7 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
     */
 
     // AST parse
+    // TODO get ILanguage::parseLock?
     clang::ASTConsumer *astConsumer = new CLangDeclBuilder(url, ci.getSourceManager(), lo);
 
     ci.getDiagnosticClient().BeginSourceFile(ci.getLangOpts(),
@@ -408,7 +416,7 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
 
 CLangParseJob::CLangParseJob (const KUrl& url) : ParseJob (url)
 {
-    d = new CLangParseJobPrivate(url);
+    d = new CLangParseJobPrivate(document());
     qDebug() << "CLANG OK!";
 }
 
@@ -420,7 +428,7 @@ CLangParseJob::~CLangParseJob()
 
 void CLangParseJob::run()
 {
-    qDebug() << "CLANG PARSE BEGIN" << d->url;
+    qDebug() << "CLANG PARSE BEGIN" << d->url.c_str();
 
     UrlParseLock urlLock(document());
 
