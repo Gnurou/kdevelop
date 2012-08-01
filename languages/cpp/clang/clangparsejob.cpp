@@ -412,9 +412,17 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
     clang::ParseAST(ci.getPreprocessor(), astConsumer, ci.getASTContext());
     ci.getDiagnosticClient().EndSourceFile();
 
-    /*
+    DUChainReadLocker l(DUChain::lock());
+    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl(url.c_str())));
+    qDebug() << rTopContext.data();
+    parent->setDuChain(rTopContext);
+    l.unlock();
+
+    DUChainWriteLocker lock(DUChain::lock());
+    DUChain::self()->updateContextEnvironment(rTopContext, new ParsingEnvironmentFile(url));
+    lock.unlock();
+
     CppLanguageSupport::self()->codeHighlighting()->highlightDUChain(rTopContext);
-    parent->setDuChain(rTopContext);*/
 }
 
 
