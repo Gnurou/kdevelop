@@ -192,9 +192,15 @@ public:
 
     virtual void HandleTranslationUnit(clang::ASTContext &ctx)
     {
-        DUChainReadLocker l(DUChain::lock());
-        ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(_url.toUrl()));
-        l.unlock();
+        ReferencedTopDUContext rTopContext;
+        {
+            DUChainReadLocker l(DUChain::lock());
+            rTopContext = DUChainUtils::standardContextForUrl(_url.toUrl());
+        }
+        {
+            DUChainWriteLocker l(DUChain::lock());
+            rTopContext->deleteUsesRecursively();
+        }
         clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
         qDebug() << "Start parsing" << _url.str() << "with context" << rTopContext.data();
         build(_url, tuDecl, rTopContext);
