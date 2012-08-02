@@ -192,9 +192,13 @@ public:
 
     virtual void HandleTranslationUnit(clang::ASTContext &ctx)
     {
+        DUChainReadLocker l(DUChain::lock());
+        ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl(_url.c_str())));
+        l.unlock();
         clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
         qDebug() << "Start parsing" << _url.c_str();
-        build(_url, tuDecl);
+        // TODO pass top context if already exists!
+        build(_url, tuDecl, rTopContext);
     }
 
     /// Should only be called once on the root node
@@ -304,10 +308,13 @@ bool CLangDeclBuilder::TraverseFunctionDecl(clang::FunctionDecl *func)
     FunctionDeclaration *fdecl = openDeclaration<FunctionDeclaration>(QualifiedIdentifier(func->getQualifiedNameAsString().c_str()), nRange);
     lock.unlock();
 
-    openContext(func, DUContext::Function, func);
+    DUContext *fContext = openContext(func, DUContext::Function, func);
 
     bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::TraverseFunctionDecl(func);
 
+    lock.lock();
+    fContext->setOwner(fdecl);
+    lock.unlock();
     qDebug() << "closing context";
     closeContext();
     closeDeclaration();
@@ -407,14 +414,17 @@ void CLangParseJobPrivate::run(CLangParseJob* parent, const ParseJob::Contents &
 
     DUChainReadLocker l(DUChain::lock());
     ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl(url.c_str())));
-    parent->setDuChain(rTopContext);
     l.unlock();
 
     DUChainWriteLocker lock(DUChain::lock());
     Cpp::EnvironmentFile *envFile = new Cpp::EnvironmentFile(parent->document(), rTopContext);
     DUChain::self()->updateContextEnvironment(rTopContext, envFile);
+    //rTopContext->setFeatures();
+    //rTopContext->setFlags();
+    parent->setDuChain(rTopContext);
     lock.unlock();
 
+    // TODO only if needed! See cppparsejob::highlightifneeded
     CppLanguageSupport::self()->codeHighlighting()->highlightDUChain(rTopContext);
 }
 
