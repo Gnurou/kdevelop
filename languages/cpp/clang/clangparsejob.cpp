@@ -193,10 +193,10 @@ public:
     virtual void HandleTranslationUnit(clang::ASTContext &ctx)
     {
         DUChainReadLocker l(DUChain::lock());
-        ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl("/home/gnurou/Work/KDE/kdevelop/testclang.c")));
+        ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(_url.toUrl()));
         l.unlock();
         clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
-        qDebug() << "Start parsing" << _url.c_str() << "with context" << rTopContext.data();
+        qDebug() << "Start parsing" << _url.str() << "with context" << rTopContext.data();
         build(_url, tuDecl, rTopContext);
     }
 
@@ -412,10 +412,10 @@ void CLangParseJobPrivate::run(CLangParseJob* parent, const ParseJob::Contents &
     ci.getDiagnosticClient().EndSourceFile();
 
     DUChainReadLocker l(DUChain::lock());
-    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl("/home/gnurou/Work/KDE/kdevelop/testclang.c")));
+    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(url.toUrl()));
     l.unlock();
     if (!rTopContext.data()) {
-        qDebug() << "ERROR: Cannot get top context for" << url.c_str();
+        qDebug() << "ERROR: Cannot get top context for" << url.str();
         return;
     }
 
@@ -434,8 +434,9 @@ void CLangParseJobPrivate::run(CLangParseJob* parent, const ParseJob::Contents &
 
 CLangParseJob::CLangParseJob (const KUrl& url) : ParseJob (url)
 {
+    // TODO IndexedString's c_str are not 0-terminated. Pass the CLangParseJob instead and get the IndexedString from document() when needed.
     d = new CLangParseJobPrivate(document());
-    qDebug() << "CLANG OK!";
+    qDebug() << "CLANG OK!" << document().str();
 }
 
 CLangParseJob::~CLangParseJob()
@@ -446,7 +447,7 @@ CLangParseJob::~CLangParseJob()
 
 void CLangParseJob::run()
 {
-    qDebug() << "CLANG PARSE BEGIN" << d->url.c_str();
+    qDebug() << "CLANG PARSE BEGIN" << d->url.str();
 
     UrlParseLock urlLock(document());
 
