@@ -193,11 +193,10 @@ public:
     virtual void HandleTranslationUnit(clang::ASTContext &ctx)
     {
         DUChainReadLocker l(DUChain::lock());
-        ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl(_url.c_str())));
+        ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl("/home/gnurou/Work/KDE/kdevelop/testclang.c")));
         l.unlock();
         clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
-        qDebug() << "Start parsing" << _url.c_str();
-        // TODO pass top context if already exists!
+        qDebug() << "Start parsing" << _url.c_str() << "with context" << rTopContext.data();
         build(_url, tuDecl, rTopContext);
     }
 
@@ -413,8 +412,12 @@ void CLangParseJobPrivate::run(CLangParseJob* parent, const ParseJob::Contents &
     ci.getDiagnosticClient().EndSourceFile();
 
     DUChainReadLocker l(DUChain::lock());
-    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl(url.c_str())));
+    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl("/home/gnurou/Work/KDE/kdevelop/testclang.c")));
     l.unlock();
+    if (!rTopContext.data()) {
+        qDebug() << "ERROR: Cannot get top context for" << url.c_str();
+        return;
+    }
 
     DUChainWriteLocker lock(DUChain::lock());
     Cpp::EnvironmentFile *envFile = new Cpp::EnvironmentFile(parent->document(), rTopContext);
