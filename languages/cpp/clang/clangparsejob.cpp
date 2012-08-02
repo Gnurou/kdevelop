@@ -57,6 +57,8 @@
 #include <language/duchain/builders/abstractdeclarationbuilder.h>
 #include <language/duchain/builders/abstractusebuilder.h>
 
+#include <QElapsedTimer>
+
 using namespace KDevelop;
 
 class KDevDiagnosticConsumer : public clang::DiagnosticConsumer
@@ -465,7 +467,10 @@ void CLangParseJob::run()
     if (abortRequested())
         return abortJob();
 
+    QElapsedTimer timer;
+    timer.start();
     d->run(this, contents());
+    qDebug() << document().str() << "parsed in" << timer.elapsed() << "ms";
 }
 
 #include "clangparsejob.moc"
