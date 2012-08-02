@@ -49,9 +49,11 @@
 #include <language/duchain/duchain.h>
 #include <language/duchain/duchainutils.h>
 #include <language/duchain/duchainlock.h>
+#include <language/duchain/types/integraltype.h>
 #include <language/backgroundparser/urlparselock.h>
 #include <languages/cpp/cpplanguagesupport.h>
 #include <languages/cpp/cppduchain/environmentmanager.h>
+#include <languages/cpp/cppduchain/navigation/navigationwidget.h>
 #include <language/duchain/builders/abstractcontextbuilder.h>
 #include <language/duchain/builders/abstracttypebuilder.h>
 #include <language/duchain/builders/abstractdeclarationbuilder.h>
@@ -134,6 +136,34 @@ clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngin
 /* TODO horrible. But easiest way for now to share between declarations and uses builders */
 QMap<clang::Decl *, DUContext *> declMap;
 
+template <class T>
+class CLangDUContext : public T {
+public:
+    template <class p1, class p2>
+    CLangDUContext(const p1& range, p2* parent, bool anonymous = false) : T(range, parent, anonymous) {}
+
+    template <class p1, class p2, class p3>
+    CLangDUContext(const p1& url, const p2& range, p3* file = 0) : T(url, range, file) {}
+
+    virtual QWidget* createNavigationWidget(Declaration* decl = 0, TopDUContext* topContext = 0,
+                                        const QString& htmlPrefix = QString(),
+                                        const QString& htmlSuffix = QString()) const
+    {
+        if( decl == 0 ) {
+          KUrl u( T::url().str() );
+          IncludeItem i;
+          i.pathNumber = -1;
+          i.name = u.fileName();
+          i.isDirectory = false;
+          i.basePath = u.upUrl();
+
+          return new Cpp::NavigationWidget( i, TopDUContextPointer(topContext ? topContext : this->topContext()), htmlPrefix, htmlSuffix );
+        } else {
+          return new Cpp::NavigationWidget( DeclarationPointer(decl), TopDUContextPointer(topContext ? topContext : this->topContext()), htmlPrefix, htmlSuffix );
+        }
+    }
+};
+
 class CLangContextBuilder : public AbstractContextBuilder<clang::Decl, clang::NamedDecl>
 {
 public:
@@ -182,6 +212,16 @@ protected:
     IndexedString _url;
     clang::SourceManager *_sm;
     clang::LangOptions _lo;
+
+    virtual DUContext* newContext(const RangeInRevision& range)
+    {
+        return new CLangDUContext<DUContext>(range, currentContext());
+    }
+
+    virtual TopDUContext* newTopContext(const RangeInRevision& range, ParsingEnvironmentFile* file = 0)
+    {
+        return new CLangDUContext<TopDUContext>(document(), range, file);
+    }
 };
 
 class CLangDeclBuilder :
@@ -199,9 +239,11 @@ public:
             DUChainReadLocker l(DUChain::lock());
             rTopContext = DUChainUtils::standardContextForUrl(_url.toUrl());
         }
-        {
+        if (rTopContext) {
             DUChainWriteLocker l(DUChain::lock());
             rTopContext->deleteUsesRecursively();
+            rTopContext->deleteChildContextsRecursively();
+            rTopContext->deleteLocalDeclarations();
         }
         clang::Decl *tuDecl = ctx.getTranslationUnitDecl();
         qDebug() << "Start parsing" << _url.str() << "with context" << rTopContext.data();
@@ -253,6 +295,7 @@ bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
     DUChainWriteLocker lock(DUChain::lock());
     DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange, DeclarationIsDefinition));
     clangDecl2kdevDecl[decl] = kDecl;
+    kDecl->setType(IntegralType::Ptr(new IntegralType(IntegralType::TypeInt)));
     //currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
     lock.unlock();
 
