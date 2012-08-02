@@ -49,6 +49,8 @@
 #include <language/duchain/duchain.h>
 #include <language/duchain/duchainutils.h>
 #include <language/duchain/duchainlock.h>
+#include <language/duchain/duchainregister.h>
+#include <language/duchain/topducontextdata.h>
 #include <language/duchain/types/integraltype.h>
 #include <language/backgroundparser/urlparselock.h>
 #include <languages/cpp/cpplanguagesupport.h>
@@ -137,13 +139,26 @@ clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngin
 QMap<clang::Decl *, DUContext *> declMap;
 
 template <class T>
-class CLangDUContext : public T {
+class CLangDUContextTpl : public T {
 public:
+    enum {
+      Identity = T::Identity + 80
+    };
+
+    template<class p1>
+    CLangDUContextTpl(p1& data) : T(data) {}
+
     template <class p1, class p2>
-    CLangDUContext(const p1& range, p2* parent, bool anonymous = false) : T(range, parent, anonymous) {}
+    CLangDUContextTpl(const p1& range, p2* parent, bool anonymous = false) : T(range, parent, anonymous)
+    {
+      static_cast<DUChainBase*>(this)->d_func_dynamic()->setClassId(this);
+    }
 
     template <class p1, class p2, class p3>
-    CLangDUContext(const p1& url, const p2& range, p3* file = 0) : T(url, range, file) {}
+    CLangDUContextTpl(const p1& url, const p2& range, p3* file = 0) : T(url, range, file)
+    {
+      static_cast<DUChainBase*>(this)->d_func_dynamic()->setClassId(this);
+    }
 
     virtual QWidget* createNavigationWidget(Declaration* decl = 0, TopDUContext* topContext = 0,
                                         const QString& htmlPrefix = QString(),
@@ -163,6 +178,12 @@ public:
         }
     }
 };
+
+typedef CLangDUContextTpl<TopDUContext> CLangTopDUContext;
+REGISTER_DUCHAIN_ITEM_WITH_DATA(CLangTopDUContext, TopDUContextData);
+
+typedef CLangDUContextTpl<DUContext> CLangDUContext;
+REGISTER_DUCHAIN_ITEM_WITH_DATA(CLangDUContext, DUContextData);
 
 class CLangContextBuilder : public AbstractContextBuilder<clang::Decl, clang::NamedDecl>
 {
@@ -215,12 +236,12 @@ protected:
 
     virtual DUContext* newContext(const RangeInRevision& range)
     {
-        return new CLangDUContext<DUContext>(range, currentContext());
+        return new CLangDUContext(range, currentContext());
     }
 
     virtual TopDUContext* newTopContext(const RangeInRevision& range, ParsingEnvironmentFile* file = 0)
     {
-        return new CLangDUContext<TopDUContext>(document(), range, file);
+        return new CLangTopDUContext(document(), range, file);
     }
 };
 
