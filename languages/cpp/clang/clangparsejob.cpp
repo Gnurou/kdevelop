@@ -330,7 +330,7 @@ bool CLangDeclBuilder::VisitValue(clang::ValueDecl *val)
 class CLangParseJobPrivate {
 public:
     CLangParseJobPrivate(const IndexedString &u);
-    void run(CLangParseJob *parent);
+    void run(CLangParseJob* parent, const ParseJob::Contents& contents);
 
     clang::CompilerInstance ci;
     clang::LangOptions &lo;
@@ -370,20 +370,9 @@ CLangParseJobPrivate::CLangParseJobPrivate (const IndexedString& u) : ci(), lo(c
     ci.createASTContext();
 
     ci.getPreprocessorOpts().UsePredefines = true;
-
-    // TODO get foreground lock as per DocumentChangeTracker doc?
-    DocumentChangeTracker *tracker = ICore::self()->languageController()->backgroundParser()->trackerForUrl(url);
-    if (tracker) {
-        llvm::MemoryBuffer *buffer = llvm::MemoryBuffer::getMemBufferCopy(tracker->document()->text().toUtf8().constData());
-        qDebug() << "current document:" << buffer->getBuffer().data();
-        ci.getSourceManager().setMainFileID(ci.getSourceManager().createFileIDForMemBuffer(buffer));
-    } else {
-        const clang::FileEntry *pFile = ci.getFileManager().getFile(url.c_str());
-        ci.getSourceManager().createMainFileID(pFile);
-    }
 }
 
-void CLangParseJobPrivate::run(CLangParseJob* parent)
+void CLangParseJobPrivate::run(CLangParseJob* parent, const ParseJob::Contents &contents)
 {
     /*
     DUChainWriteLocker lock(DUChain::lock());
@@ -402,6 +391,10 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
     rTopContext->clearProblems();
     lock.unlock();
     */
+
+    // Set contents for parser
+    llvm::MemoryBuffer *buffer = llvm::MemoryBuffer::getMemBuffer(contents.contents.constData());
+    ci.getSourceManager().setMainFileID(ci.getSourceManager().createFileIDForMemBuffer(buffer));
 
     // AST parse
     // TODO get ILanguage::parseLock?
@@ -447,11 +440,12 @@ void CLangParseJob::run()
     readContents();
 
     qDebug() << "MODIFICATION:" << contents().modification;
+    qDebug() << "CONTENTS:" << QString(contents().contents);
 
     if (abortRequested())
         return abortJob();
 
-    d->run(this);
+    d->run(this, contents());
 }
 
 #include "clangparsejob.moc"
