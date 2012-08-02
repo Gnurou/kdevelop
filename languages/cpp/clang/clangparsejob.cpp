@@ -414,12 +414,12 @@ void CLangParseJobPrivate::run(CLangParseJob* parent)
 
     DUChainReadLocker l(DUChain::lock());
     ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl(url.c_str())));
-    qDebug() << rTopContext.data();
     parent->setDuChain(rTopContext);
     l.unlock();
 
     DUChainWriteLocker lock(DUChain::lock());
-    DUChain::self()->updateContextEnvironment(rTopContext, new ParsingEnvironmentFile(url));
+    Cpp::EnvironmentFile *envFile = new Cpp::EnvironmentFile(parent->document(), rTopContext);
+    DUChain::self()->updateContextEnvironment(rTopContext, envFile);
     lock.unlock();
 
     CppLanguageSupport::self()->codeHighlighting()->highlightDUChain(rTopContext);
