@@ -135,9 +135,6 @@ clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngin
     return new KDevDiagnosticConsumer(lo);
 }
 
-/* TODO horrible. But easiest way for now to share between declarations and uses builders */
-QMap<clang::Decl *, DUContext *> declMap;
-
 template <class T>
 class CLangDUContextTpl : public T {
 public:
@@ -206,14 +203,14 @@ public:
     virtual void setContextOnNode(clang::Decl* node, DUContext* context)
     {
         qDebug() << "setContextOnNode" << node;
-        declMap[node] = context;
+        _declMap[node] = context;
     }
 
     virtual DUContext* contextFromNode(clang::Decl* node)
     {
-        qDebug() << "contextFromNode" << node << declMap.contains(node);
-        if (!declMap.contains(node)) return 0;
-        else return declMap[node];
+        qDebug() << "contextFromNode" << node << _declMap.contains(node);
+        if (!_declMap.contains(node)) return 0;
+        else return _declMap[node];
     }
 
     virtual RangeInRevision editorFindRange(clang::Decl* fromNode, clang::Decl* toNode)
@@ -229,6 +226,8 @@ public:
         else return QualifiedIdentifier(QString(node->getQualifiedNameAsString().c_str()));
     }
 
+    const QMap<clang::Decl *, DUContext *> declMap() const { return _declMap; }
+
 protected:
     IndexedString _url;
     clang::SourceManager *_sm;
@@ -243,8 +242,18 @@ protected:
     {
         return new CLangTopDUContext(document(), range, file);
     }
+
+    /*
+     * Map clang declarations to their corresponding context node.
+     */
+    QMap<clang::Decl *, DUContext *> _declMap;
 };
 
+/**
+ * Build contexts and declarations. The mapping between CLang and KDevelop's
+ * declarations is available through declMap(). This is useful for the following
+ * parsers.
+ */
 class CLangDeclBuilder :
     public AbstractDeclarationBuilder<clang::Decl, clang::NamedDecl, CLangContextBuilder>,
     public clang::ASTConsumer, public clang::RecursiveASTVisitor<CLangDeclBuilder>
@@ -278,6 +287,12 @@ public:
         TraverseDecl(node);
     }
 
+    /*
+     * Map clang declarations to KDev declarations. That way we can look decls
+     * at a glance without using KDev's lookup system.
+     */
+    QMap<clang::Decl *, DeclarationPointer> clangDecl2kdevDecl;
+
     virtual bool VisitTypeDecl(clang::TypeDecl *decl);
     virtual bool VisitVarDecl(clang::VarDecl *decl);
     virtual bool VisitMemberExpr(clang::MemberExpr *expr);
@@ -301,7 +316,23 @@ bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl)
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitTypeDecl(decl);
 }
 
-QMap<clang::Decl *, DeclarationPointer> clangDecl2kdevDecl;
+AbstractType::Ptr CLangType2KDevType(const clang::QualType &type)
+{
+    const clang::Type *t = type.getTypePtr();
+
+    if (t->isBuiltinType())
+    {
+        if (t->isIntegerType()) {
+            return AbstractType::Ptr(new IntegralType(IntegralType::TypeInt));
+        }
+    }
+    {
+      StructureType *str = new StructureType();
+      str->setDeclarationId(DeclarationId(QualifiedIdentifier("tralala")));
+
+      return AbstractType::Ptr(str);
+    }
+}
 
 /**
  * Variable declaration within the current context
@@ -316,7 +347,8 @@ bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
     DUChainWriteLocker lock(DUChain::lock());
     DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange, DeclarationIsDefinition));
     clangDecl2kdevDecl[decl] = kDecl;
-    kDecl->setType(IntegralType::Ptr(new IntegralType(IntegralType::TypeInt)));
+    kDecl->setType(CLangType2KDevType(decl->getType()));
+    //kDecl->setType(IntegralType::Ptr(new IntegralType(IntegralType::TypeInt)));
     //currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
     lock.unlock();
 
@@ -407,16 +439,19 @@ bool CLangDeclBuilder::VisitValue(clang::ValueDecl *val)
 
 class CLangParseJobPrivate {
 public:
-    CLangParseJobPrivate(const IndexedString &u);
-    void run(CLangParseJob* parent, const ParseJob::Contents& contents);
+    CLangParseJobPrivate(CLangParseJob *_parent);
+    void run();
 
     clang::CompilerInstance ci;
     clang::LangOptions &lo;
     clang::HeaderSearchOptions &so;
     IndexedString url;
+
+private:
+    CLangParseJob *parent;
 };
 
-CLangParseJobPrivate::CLangParseJobPrivate (const IndexedString& u) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(u)
+CLangParseJobPrivate::CLangParseJobPrivate (CLangParseJob *_parent) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(_parent->document()), parent(_parent)
 {
     lo.C99 = 1;
     lo.GNUMode = 0;
@@ -450,7 +485,7 @@ CLangParseJobPrivate::CLangParseJobPrivate (const IndexedString& u) : ci(), lo(c
     ci.getPreprocessorOpts().UsePredefines = true;
 }
 
-void CLangParseJobPrivate::run(CLangParseJob* parent, const ParseJob::Contents &contents)
+void CLangParseJobPrivate::run()
 {
     /*
     DUChainWriteLocker lock(DUChain::lock());
@@ -471,7 +506,7 @@ void CLangParseJobPrivate::run(CLangParseJob* parent, const ParseJob::Contents &
     */
 
     // Set contents for parser
-    llvm::MemoryBuffer *buffer = llvm::MemoryBuffer::getMemBuffer(contents.contents.constData());
+    llvm::MemoryBuffer *buffer = llvm::MemoryBuffer::getMemBuffer(parent->contents().contents.constData());
     ci.getSourceManager().setMainFileID(ci.getSourceManager().createFileIDForMemBuffer(buffer));
 
     // AST parse
@@ -507,7 +542,7 @@ void CLangParseJobPrivate::run(CLangParseJob* parent, const ParseJob::Contents &
 CLangParseJob::CLangParseJob (const KUrl& url) : ParseJob (url)
 {
     // TODO IndexedString's c_str are not 0-terminated. Pass the CLangParseJob instead and get the IndexedString from document() when needed.
-    d = new CLangParseJobPrivate(document());
+    d = new CLangParseJobPrivate(this);
     qDebug() << "CLANG OK!" << document().str();
 }
 
@@ -533,7 +568,7 @@ void CLangParseJob::run()
 
     QElapsedTimer timer;
     timer.start();
-    d->run(this, contents());
+    d->run();
     qDebug() << document().str() << "parsed in" << timer.elapsed() << "ms";
 }
 
