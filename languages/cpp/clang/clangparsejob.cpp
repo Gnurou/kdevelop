@@ -321,16 +321,14 @@ AbstractType::Ptr CLangType2KDevType(const clang::QualType &type)
 {
     const clang::Type *t = type.getTypePtr();
 
-    if (t->isBuiltinType())
-    {
+    if (t->isBuiltinType()) {
         if (t->isIntegerType()) {
             return AbstractType::Ptr(new IntegralType(IntegralType::TypeInt));
         }
     }
     {
       StructureType *str = new StructureType();
-      str->setDeclarationId(DeclarationId(QualifiedIdentifier("tralala")));
-
+      str->setDeclarationId(DeclarationId(QualifiedIdentifier(type.getAsString().c_str())));
       return AbstractType::Ptr(str);
     }
 }
