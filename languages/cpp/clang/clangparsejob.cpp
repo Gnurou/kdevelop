@@ -68,12 +68,14 @@ using namespace KDevelop;
 class KDevDiagnosticConsumer : public clang::DiagnosticConsumer
 {
 public:
-    KDevDiagnosticConsumer(clang::LangOptions _lo) : lo(_lo) {}
+    KDevDiagnosticConsumer(clang::LangOptions _lo, IndexedString url) : lo(_lo), _url(url) {}
   virtual void HandleDiagnostic(clang::DiagnosticsEngine::Level DiagLevel,
                                 const clang::Diagnostic &Info);
   virtual DiagnosticConsumer *clone(clang::DiagnosticsEngine &Diags) const;
 
   clang::LangOptions lo;
+private:
+  IndexedString _url;
 };
 
 void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level diagLevel,
@@ -88,7 +90,6 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
     ProblemPointer p(new Problem);
     qDebug() << info.getNumRanges();
     clang::SourceLocation location(info.getLocation());
-    QString bName(KUrl(sm.getBufferName(location)).toLocalFile());
     p->setDescription(str);
     p->setSource(ProblemData::Parser);
     ProblemData::Severity severity;
@@ -113,18 +114,18 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
         clang::SourceLocation begLocation(info.getRange(0).getBegin());
         clang::SourceLocation endLocation(clang::Lexer::getLocForEndOfToken(info.getRange(0).getEnd(), 0, sm, lo));
 
-        DocumentRange range(IndexedString(bName.toUtf8().constData(), bName.size()), SimpleRange(SimpleCursor(sm.getSpellingLineNumber(begLocation) - 1, sm.getSpellingColumnNumber(begLocation) - 1),
+        DocumentRange range(_url, SimpleRange(SimpleCursor(sm.getSpellingLineNumber(begLocation) - 1, sm.getSpellingColumnNumber(begLocation) - 1),
             SimpleCursor(sm.getSpellingLineNumber(endLocation) - 1, sm.getSpellingColumnNumber(endLocation) - 1)));
         p->setFinalLocation(range);
     } else {
-        DocumentRange range(IndexedString(bName.toUtf8().constData(), bName.size()), SimpleRange(SimpleCursor(sm.getSpellingLineNumber(location) - 1, sm.getSpellingColumnNumber(clang::Lexer::getLocForEndOfToken(location, 0, sm, lo)) - 1), 0));
+        DocumentRange range(_url, SimpleRange(SimpleCursor(sm.getSpellingLineNumber(location) - 1, sm.getSpellingColumnNumber(clang::Lexer::getLocForEndOfToken(location, 0, sm, lo)) - 1), 0));
         p->setFinalLocation(range);
     }
 
-    qDebug() << "parsing error" << p->description() << p->finalLocation() << bName;
+    qDebug() << "parsing error" << p->description() << p->finalLocation() << _url.toUrl();
 
     DUChainWriteLocker lock(DUChain::lock());
-    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(KUrl(bName)));
+    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(_url.toUrl()));
     if (rTopContext) rTopContext->addProblem(p);
     else qDebug() << "No top context to report error to!";
     lock.unlock();
@@ -132,7 +133,7 @@ void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level di
 
 clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngine &Diags) const
 {
-    return new KDevDiagnosticConsumer(lo);
+    return new KDevDiagnosticConsumer(lo, _url);
 }
 
 template <class T>
@@ -461,7 +462,7 @@ CLangParseJobPrivate::CLangParseJobPrivate (CLangParseJob *_parent) : ci(), lo(c
     lo.Bool = 0;
     lo.NoBuiltin = 0;
 
-    ci.createDiagnostics(0, 0, new KDevDiagnosticConsumer(lo));
+    ci.createDiagnostics(0, 0, new KDevDiagnosticConsumer(lo, _parent->document()));
 
     clang::TargetOptions to;
     to.Triple = llvm::sys::getDefaultTargetTriple();
@@ -505,6 +506,18 @@ void CLangParseJobPrivate::run()
     lock.unlock();
     */
 
+    // Clear previous problems
+    {
+      DUChainReadLocker l(DUChain::lock());
+      ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(url.toUrl()));
+      l.unlock();
+      if (rTopContext.data()) {
+        DUChainWriteLocker w(DUChain::lock());
+        rTopContext->clearProblems();
+        w.unlock();
+      }
+    }
+
     // Set contents for parser
     llvm::MemoryBuffer *buffer = llvm::MemoryBuffer::getMemBuffer(parent->contents().contents.constData());
     ci.getSourceManager().setMainFileID(ci.getSourceManager().createFileIDForMemBuffer(buffer));
@@ -520,11 +533,11 @@ void CLangParseJobPrivate::run()
 
     DUChainReadLocker l(DUChain::lock());
     ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(url.toUrl()));
-    l.unlock();
     if (!rTopContext.data()) {
         qDebug() << "ERROR: Cannot get top context for" << url.str();
         return;
     }
+    l.unlock();
 
     DUChainWriteLocker lock(DUChain::lock());
     Cpp::EnvironmentFile *envFile = new Cpp::EnvironmentFile(parent->document(), rTopContext);
