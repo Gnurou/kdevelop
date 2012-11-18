@@ -47,6 +47,7 @@
 #include <language/duchain/duchainlock.h>
 #include <language/duchain/duchainregister.h>
 #include <language/duchain/topducontextdata.h>
+#include <language/duchain/classdeclaration.h>
 #include <language/duchain/types/integraltype.h>
 #include <language/backgroundparser/urlparselock.h>
 #include <languages/cpp/cpplanguagesupport.h>
@@ -288,7 +289,8 @@ public:
      * Map clang declarations to KDev declarations. That way we can look decls
      * at a glance without using KDev's lookup system.
      */
-    QMap<clang::Decl *, DeclarationPointer> clangDecl2kdevDecl;
+    QMap<const clang::Decl *, DeclarationPointer> clangDecl2kdevDecl;
+    QMap<const clang::Type *, DeclarationPointer> clangType2kdevType;
 
     virtual bool VisitTypeDecl(clang::TypeDecl *decl);
     virtual bool VisitVarDecl(clang::VarDecl *decl);
@@ -313,14 +315,16 @@ bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl)
     qDebug() << "type" << decl->getQualifiedNameAsString().c_str() << tBegin.line << tBegin.column << tEnd.line << tEnd.column << nBegin.line << nBegin.column << nEnd.line << nEnd.column;
 
     DUChainWriteLocker lock(DUChain::lock());
-    DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange, DeclarationIsDefinition));
-    clangDecl2kdevDecl[decl] = kDecl;
+    DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange));
+    qDebug() << "Adding type" << decl->getTypeForDecl() << kDecl.data();
+    clangType2kdevType[decl->getTypeForDecl()] = kDecl;
     //kDecl->setType(IntegralType::Ptr(new IntegralType(IntegralType::TypeInt)));
     //currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
     lock.unlock();
 
     bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitTypeDecl(decl);
 
+    qDebug() << "closing context";
     closeDeclaration();
     return ret;
 }
@@ -357,6 +361,15 @@ bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
     kDecl->setType(CLangType2KDevType(decl->getType()));
     //kDecl->setType(IntegralType::Ptr(new IntegralType(IntegralType::TypeInt)));
     //currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
+
+    // Use for type
+    CursorInRevision tBegin(toCursor(decl->getTypeSpecStartLoc()));
+    CursorInRevision tEnd(toCursor(endOf(decl->getTypeSpecStartLoc())));
+    RangeInRevision tRange(tBegin, tEnd);
+    kDecl = clangType2kdevType[decl->getType().getTypePtr()];
+    qDebug() << "type range" << tBegin.line << tBegin.column << tEnd.line << tEnd.column << decl->getType().getTypePtr() << kDecl.data();
+    if (kDecl.data())
+        currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), tRange);
     lock.unlock();
 
     bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitVarDecl(decl);
