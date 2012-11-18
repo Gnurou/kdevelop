@@ -298,6 +298,7 @@ public:
     virtual bool VisitMemberExpr(clang::MemberExpr *expr);
     virtual bool VisitDesignatedInitExpr(clang::DesignatedInitExpr *expr);
     virtual bool VisitDeclRefExpr(clang::DeclRefExpr *expr);
+    virtual bool TraverseRecordDecl(clang::RecordDecl *decl);
     virtual bool TraverseFunctionDecl(clang::FunctionDecl *func);
     virtual bool VisitValue(clang::ValueDecl *val);
 };
@@ -314,18 +315,8 @@ bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl)
     RangeInRevision nRange(nBegin, nEnd);
     qDebug() << "type" << decl->getQualifiedNameAsString().c_str() << tBegin.line << tBegin.column << tEnd.line << tEnd.column << nBegin.line << nBegin.column << nEnd.line << nEnd.column;
 
-    DUChainWriteLocker lock(DUChain::lock());
-    DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange));
-    qDebug() << "Adding type" << decl->getTypeForDecl() << kDecl.data();
-    clangType2kdevType[decl->getTypeForDecl()] = kDecl;
-    //kDecl->setType(IntegralType::Ptr(new IntegralType(IntegralType::TypeInt)));
-    //currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
-    lock.unlock();
-
     bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitTypeDecl(decl);
 
-    qDebug() << "closing context";
-    closeDeclaration();
     return ret;
 }
 
@@ -366,8 +357,8 @@ bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
     CursorInRevision tBegin(toCursor(decl->getTypeSpecStartLoc()));
     CursorInRevision tEnd(toCursor(endOf(decl->getTypeSpecStartLoc())));
     RangeInRevision tRange(tBegin, tEnd);
-    kDecl = clangType2kdevType[decl->getType().getTypePtr()];
-    qDebug() << "type range" << tBegin.line << tBegin.column << tEnd.line << tEnd.column << decl->getType().getTypePtr() << kDecl.data();
+    kDecl = clangType2kdevType[decl->getType().getTypePtrOrNull()];
+    qDebug() << "type range" << tBegin.line << tBegin.column << tEnd.line << tEnd.column << decl->getType().getAsString().c_str() << decl->getType().getTypePtrOrNull() << kDecl.data();
     if (kDecl.data())
         currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), tRange);
     lock.unlock();
@@ -461,6 +452,40 @@ bool CLangDeclBuilder::VisitDeclRefExpr(clang::DeclRefExpr *expr)
     }
 
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitDeclRefExpr(expr);
+}
+
+/**
+ * Parse a struct/class/union union type, add it to types list,
+ * and setup code completion
+ */
+bool CLangDeclBuilder::TraverseRecordDecl(clang::RecordDecl *decl)
+{
+    CursorInRevision fBegin(toCursor(decl->getLocStart()));
+    CursorInRevision fEnd(toCursor(endOf(decl->getLocEnd())));
+    CursorInRevision nBegin(toCursor(decl->getLocation()));
+    CursorInRevision nEnd(toCursor(endOf(decl->getLocation())));
+    RangeInRevision nRange(nBegin, nEnd);
+    qDebug() << "record" << decl->getQualifiedNameAsString().c_str() << fBegin.line << fBegin.column << fEnd.line << fEnd.column << decl->getDeclName().getAsString().c_str();
+    qDebug() << "opening context";
+
+    DUChainWriteLocker lock(DUChain::lock());
+    FunctionDeclaration *fdecl = openDeclaration<FunctionDeclaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange);
+    DeclarationPointer kDecl(fdecl);
+    clangType2kdevType[decl->getTypeForDecl()] = kDecl;
+    //kDecl->setType(CLangType2KDevType(func->getType()));
+    lock.unlock();
+
+    DUContext *fContext = openContext(decl, DUContext::Function, decl);
+
+    bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::TraverseRecordDecl(decl);
+    lock.lock();
+    fContext->setOwner(fdecl);
+    lock.unlock();
+    qDebug() << "closing context";
+    closeContext();
+    closeDeclaration();
+    qDebug() << "RecordDecl" << decl->getNameAsString().c_str() << "done";
+    return ret;
 }
 
 /**
