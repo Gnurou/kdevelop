@@ -188,6 +188,7 @@ public:
 
     virtual void HandleTranslationUnit(clang::ASTContext &ctx)
     {
+        astContext = &ctx;
         ReferencedTopDUContext rTopContext;
         {
             DUChainReadLocker l(DUChain::lock());
@@ -216,7 +217,7 @@ public:
      * at a glance without using KDev's lookup system.
      */
     QMap<const clang::Decl *, DeclarationPointer> clangDecl2kdevDecl;
-    QMap<const clang::Type *, DeclarationPointer> clangType2kdevType;
+    QMap<std::string, DeclarationPointer> clangType2kdevType;
 
     RangeInRevision rangeForLocation(const clang::SourceLocation &start, const clang::SourceLocation& end);
     RangeInRevision rangeForLocation(const clang::SourceLocation &loc);
@@ -231,6 +232,9 @@ public:
     virtual bool TraverseRecordDecl(clang::RecordDecl *decl);
     virtual bool TraverseFunctionDecl(clang::FunctionDecl *func);
     virtual bool VisitValueDecl(clang::ValueDecl *val);
+
+private:
+    clang::ASTContext *astContext;
 };
 
 AbstractType::Ptr CLangType2KDevType(const clang::QualType &type)
@@ -281,6 +285,14 @@ bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl)
     CursorInRevision nEnd(toCursor(endOf(decl->getLocation())));
     RangeInRevision nRange(nBegin, nEnd);
     qDebug() << "type" << decl->getQualifiedNameAsString().c_str() << tBegin.line << tBegin.column << tEnd.line << tEnd.column << nBegin.line << nBegin.column << nEnd.line << nEnd.column;
+    // TODO why is the type always different compared to variable declarations?
+    //qDebug() << astContext->getTypeDeclType(decl).getUnqualifiedType().getTypePtr();
+
+    DUChainWriteLocker lock(DUChain::lock());
+    DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange, DeclarationIsDefinition));
+    clangType2kdevType[astContext->getTypeDeclType(decl).getUnqualifiedType().getAsString()] = kDecl;
+    closeDeclaration();
+    lock.unlock();
 
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitTypeDecl(decl);
 }
@@ -307,7 +319,7 @@ bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
     qDebug() << "Type for var:" << decl->getType().getTypePtr();
     if (decl->getType().getTypePtr())
         qDebug() << "One more:" << decl->getType().getTypePtr()->getTypeClassName();
-    kDecl = clangType2kdevType[decl->getType().getTypePtr()];
+    kDecl = clangType2kdevType[decl->getType().getUnqualifiedType().getAsString().c_str()];
     qDebug() << "type range" << tBegin.line << tBegin.column << tEnd.line << tEnd.column << decl->getType().getAsString().c_str() << decl->getType().getTypePtrOrNull() << kDecl.data();
     if (kDecl.data())
         currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), tRange);
@@ -388,7 +400,7 @@ bool CLangDeclBuilder::TraverseRecordDecl(clang::RecordDecl *decl)
 
     DeclarationPointer kDecl(openDeclaration<ClassDeclaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange));
     qDebug() << "Type for decl:" << decl->getTypeForDecl() << decl->getTypeForDecl()->getTypeClassName();
-    clangType2kdevType[decl->getTypeForDecl()] = kDecl;
+    //clangType2kdevType[decl->getTypeForDecl()] = kDecl;
     DUContext *fContext = openContext(decl, DUContext::Class, decl);
     fContext->setOwner(kDecl.data());
     lock.unlock();
