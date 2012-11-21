@@ -84,4 +84,3 @@ clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngin
 {
     return new KDevDiagnosticConsumer(lo, _url);
 }
-
