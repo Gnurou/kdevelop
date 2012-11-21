@@ -12,10 +12,10 @@
 * but WITHOUT ANY WARRANTY; without even the implied warranty of
 * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 * GNU General Public License for more details.
-*
 */
 
 #include "clangparsejob.h"
+#include "clangdiagnostics.h"
 
 #include <llvm/Support/Host.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -61,77 +61,6 @@
 #include <QElapsedTimer>
 
 using namespace KDevelop;
-
-class KDevDiagnosticConsumer : public clang::DiagnosticConsumer
-{
-public:
-    KDevDiagnosticConsumer(clang::LangOptions _lo, IndexedString url) : lo(_lo), _url(url) {}
-  virtual void HandleDiagnostic(clang::DiagnosticsEngine::Level DiagLevel,
-                                const clang::Diagnostic &Info);
-  virtual DiagnosticConsumer *clone(clang::DiagnosticsEngine &Diags) const;
-
-  clang::LangOptions lo;
-private:
-  IndexedString _url;
-};
-
-void KDevDiagnosticConsumer::HandleDiagnostic(clang::DiagnosticsEngine::Level diagLevel,
-                                                      const clang::Diagnostic &info)
-{
-    clang::SourceManager &sm(info.getSourceManager());
-    llvm::SmallVector<char, 10> out;
-    info.FormatDiagnostic(out);
-    
-    QString str(QByteArray(out.data(), out.size_in_bytes()));
-
-    ProblemPointer p(new Problem);
-    qDebug() << info.getNumRanges();
-    clang::SourceLocation location(info.getLocation());
-    p->setDescription(str);
-    p->setSource(ProblemData::Parser);
-    ProblemData::Severity severity;
-    switch (diagLevel) {
-        case clang::DiagnosticsEngine::Ignored:
-        case clang::DiagnosticsEngine::Note:
-            severity = ProblemData::Hint;
-            break;
-        case clang::DiagnosticsEngine::Warning:
-            severity = ProblemData::Warning;
-            break;
-        case clang::DiagnosticsEngine::Error:
-        case clang::DiagnosticsEngine::Fatal:
-        default:
-            severity = ProblemData::Error;
-            break;
-    }
-    p->setSeverity(severity);
-
-    // TODO correctly calculate range!
-    if (info.getNumRanges() > 0) {
-        clang::SourceLocation begLocation(info.getRange(0).getBegin());
-        clang::SourceLocation endLocation(clang::Lexer::getLocForEndOfToken(info.getRange(0).getEnd(), 0, sm, lo));
-
-        DocumentRange range(_url, SimpleRange(SimpleCursor(sm.getSpellingLineNumber(begLocation) - 1, sm.getSpellingColumnNumber(begLocation) - 1),
-            SimpleCursor(sm.getSpellingLineNumber(endLocation) - 1, sm.getSpellingColumnNumber(endLocation) - 1)));
-        p->setFinalLocation(range);
-    } else {
-        DocumentRange range(_url, SimpleRange(SimpleCursor(sm.getSpellingLineNumber(location) - 1, sm.getSpellingColumnNumber(clang::Lexer::getLocForEndOfToken(location, 0, sm, lo)) - 1), 0));
-        p->setFinalLocation(range);
-    }
-
-    qDebug() << "parsing error" << p->description() << p->finalLocation() << _url.toUrl();
-
-    DUChainWriteLocker lock(DUChain::lock());
-    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(_url.toUrl()));
-    if (rTopContext) rTopContext->addProblem(p);
-    else qDebug() << "No top context to report error to!";
-    lock.unlock();
-}
-
-clang::DiagnosticConsumer *KDevDiagnosticConsumer::clone(clang::DiagnosticsEngine &Diags) const
-{
-    return new KDevDiagnosticConsumer(lo, _url);
-}
 
 template <class T>
 class CLangDUContextTpl : public T {
@@ -200,15 +129,15 @@ public:
 
     virtual void setContextOnNode(clang::Decl* node, DUContext* context)
     {
-        qDebug() << "setContextOnNode" << node;
         _declMap[node] = context;
     }
 
     virtual DUContext* contextFromNode(clang::Decl* node)
     {
-        qDebug() << "contextFromNode" << node << _declMap.contains(node);
-        if (!_declMap.contains(node)) return 0;
-        else return _declMap[node];
+        if (!_declMap.contains(node))
+            return 0;
+        else
+            return _declMap[node];
     }
 
     virtual RangeInRevision editorFindRange(clang::Decl* fromNode, clang::Decl* toNode)
@@ -220,17 +149,15 @@ public:
 
     virtual QualifiedIdentifier identifierForNode(clang::NamedDecl* node)
     {
-        if (!node) return QualifiedIdentifier();
-        else return QualifiedIdentifier(QString(node->getQualifiedNameAsString().c_str()));
+        if (!node)
+            return QualifiedIdentifier();
+        else
+            return QualifiedIdentifier(QString(node->getQualifiedNameAsString().c_str()));
     }
 
     const QMap<clang::Decl *, DUContext *> declMap() const { return _declMap; }
 
 protected:
-    IndexedString _url;
-    clang::SourceManager *_sm;
-    clang::LangOptions _lo;
-
     virtual DUContext* newContext(const RangeInRevision& range)
     {
         return new CLangDUContext(range, currentContext());
@@ -245,13 +172,12 @@ protected:
      * Map clang declarations to their corresponding context node.
      */
     QMap<clang::Decl *, DUContext *> _declMap;
+
+    IndexedString _url;
+    clang::SourceManager *_sm;
+    clang::LangOptions _lo;
 };
 
-/**
- * Build contexts and declarations. The mapping between CLang and KDevelop's
- * declarations is available through declMap(). This is useful for the following
- * parsers.
- */
 class CLangDeclBuilder :
     public AbstractDeclarationBuilder<clang::Decl, clang::NamedDecl, CLangContextBuilder>,
     public clang::ASTConsumer, public clang::RecursiveASTVisitor<CLangDeclBuilder>
@@ -304,8 +230,25 @@ public:
     virtual bool VisitDeclRefExpr(clang::DeclRefExpr *expr);
     virtual bool TraverseRecordDecl(clang::RecordDecl *decl);
     virtual bool TraverseFunctionDecl(clang::FunctionDecl *func);
-    virtual bool VisitValue(clang::ValueDecl *val);
+    virtual bool VisitValueDecl(clang::ValueDecl *val);
 };
+
+AbstractType::Ptr CLangType2KDevType(const clang::QualType &type)
+{
+    const clang::Type *t = type.getTypePtr();
+
+    if (t->isBuiltinType()) {
+        // TODO support other built-in types
+        if (t->isIntegerType()) {
+            return AbstractType::Ptr(new IntegralType(IntegralType::TypeInt));
+        }
+        return AbstractType::Ptr(0);
+    } else {
+      StructureType *str = new StructureType();
+      str->setDeclarationId(DeclarationId(QualifiedIdentifier(type.getAsString().c_str())));
+      return AbstractType::Ptr(str);
+    }
+}
 
 RangeInRevision CLangDeclBuilder::rangeForLocation(const clang::SourceLocation &start, const clang::SourceLocation& end)
 {
@@ -339,25 +282,7 @@ bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl)
     RangeInRevision nRange(nBegin, nEnd);
     qDebug() << "type" << decl->getQualifiedNameAsString().c_str() << tBegin.line << tBegin.column << tEnd.line << tEnd.column << nBegin.line << nBegin.column << nEnd.line << nEnd.column;
 
-    bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitTypeDecl(decl);
-
-    return ret;
-}
-
-AbstractType::Ptr CLangType2KDevType(const clang::QualType &type)
-{
-    const clang::Type *t = type.getTypePtr();
-
-    if (t->isBuiltinType()) {
-        if (t->isIntegerType()) {
-            return AbstractType::Ptr(new IntegralType(IntegralType::TypeInt));
-        }
-    }
-    {
-      StructureType *str = new StructureType();
-      str->setDeclarationId(DeclarationId(QualifiedIdentifier(type.getAsString().c_str())));
-      return AbstractType::Ptr(str);
-    }
+    return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitTypeDecl(decl);
 }
 
 /**
@@ -379,7 +304,10 @@ bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
     CursorInRevision tBegin(toCursor(decl->getTypeSpecStartLoc()));
     CursorInRevision tEnd(toCursor(endOf(decl->getTypeSpecStartLoc())));
     RangeInRevision tRange(tBegin, tEnd);
-    kDecl = clangType2kdevType[decl->getType().getTypePtrOrNull()];
+    qDebug() << "Type for var:" << decl->getType().getTypePtr();
+    if (decl->getType().getTypePtr())
+        qDebug() << "One more:" << decl->getType().getTypePtr()->getTypeClassName();
+    kDecl = clangType2kdevType[decl->getType().getTypePtr()];
     qDebug() << "type range" << tBegin.line << tBegin.column << tEnd.line << tEnd.column << decl->getType().getAsString().c_str() << decl->getType().getTypePtrOrNull() << kDecl.data();
     if (kDecl.data())
         currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), tRange);
@@ -451,28 +379,22 @@ bool CLangDeclBuilder::VisitDeclRefExpr(clang::DeclRefExpr *expr)
  */
 bool CLangDeclBuilder::TraverseRecordDecl(clang::RecordDecl *decl)
 {
-    CursorInRevision fBegin(toCursor(decl->getLocStart()));
-    CursorInRevision fEnd(toCursor(endOf(decl->getLocEnd())));
     CursorInRevision nBegin(toCursor(decl->getLocation()));
     CursorInRevision nEnd(toCursor(endOf(decl->getLocation())));
     RangeInRevision nRange(nBegin, nEnd);
-    qDebug() << "record" << decl->getQualifiedNameAsString().c_str() << fBegin.line << fBegin.column << fEnd.line << fEnd.column << decl->getDeclName().getAsString().c_str();
-    qDebug() << "opening context";
+    qDebug() << "record" << decl->getQualifiedNameAsString().c_str() << decl->getDeclName().getAsString().c_str();
 
     DUChainWriteLocker lock(DUChain::lock());
-    FunctionDeclaration *fdecl = openDeclaration<FunctionDeclaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange);
-    DeclarationPointer kDecl(fdecl);
-    clangType2kdevType[decl->getTypeForDecl()] = kDecl;
-    //kDecl->setType(CLangType2KDevType(func->getType()));
-    lock.unlock();
 
-    DUContext *fContext = openContext(decl, DUContext::Function, decl);
+    DeclarationPointer kDecl(openDeclaration<ClassDeclaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange));
+    qDebug() << "Type for decl:" << decl->getTypeForDecl() << decl->getTypeForDecl()->getTypeClassName();
+    clangType2kdevType[decl->getTypeForDecl()] = kDecl;
+    DUContext *fContext = openContext(decl, DUContext::Class, decl);
+    fContext->setOwner(kDecl.data());
+    lock.unlock();
 
     bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::TraverseRecordDecl(decl);
-    lock.lock();
-    fContext->setOwner(fdecl);
-    lock.unlock();
-    qDebug() << "closing context";
+
     closeContext();
     closeDeclaration();
     qDebug() << "RecordDecl" << decl->getNameAsString().c_str() << "done";
@@ -484,66 +406,47 @@ bool CLangDeclBuilder::TraverseRecordDecl(clang::RecordDecl *decl)
  */
 bool CLangDeclBuilder::TraverseFunctionDecl(clang::FunctionDecl *func)
 {
-    CursorInRevision fBegin(toCursor(func->getLocStart()));
-    CursorInRevision fEnd(toCursor(endOf(func->getLocEnd())));
     CursorInRevision nBegin(toCursor(func->getLocation()));
     CursorInRevision nEnd(toCursor(endOf(func->getLocation())));
     RangeInRevision nRange(nBegin, nEnd);
-    qDebug() << "func" << func->getQualifiedNameAsString().c_str() << fBegin.line << fBegin.column << fEnd.line << fEnd.column;
-    qDebug() << "opening context";
-    // TODO if is definition, should pass in 3rd arg
-    //FunctionDeclaration *fdecl = openDeclaration<FunctionDeclaration>(func, func);
+    qDebug() << "func" << func->getQualifiedNameAsString().c_str();
     
     DUChainWriteLocker lock(DUChain::lock());
-    FunctionDeclaration *fdecl = openDeclaration<FunctionDeclaration>(QualifiedIdentifier(func->getQualifiedNameAsString().c_str()), nRange);
-    DeclarationPointer kDecl(fdecl);
-    clangDecl2kdevDecl[func] = kDecl;
-    kDecl->setType(CLangType2KDevType(func->getType()));
-    //kDecl->setType(IntegralType::Ptr(new IntegralType(IntegralType::TypeInt)));
-    //currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
-    lock.unlock();
 
+    DeclarationPointer kDecl(openDeclaration<FunctionDeclaration>(QualifiedIdentifier(func->getQualifiedNameAsString().c_str()), nRange, DeclarationIsDefinition));
+    clangDecl2kdevDecl[func] = kDecl;
+    //kDecl->setType(CLangType2KDevType(func->getType()));
     DUContext *fContext = openContext(func, DUContext::Function, func);
+    fContext->setOwner(kDecl.data());
+    lock.unlock();
 
     bool ret = clang::RecursiveASTVisitor<CLangDeclBuilder>::TraverseFunctionDecl(func);
 
-    lock.lock();
-    fContext->setOwner(fdecl);
-    lock.unlock();
-    qDebug() << "closing context";
     closeContext();
     closeDeclaration();
     qDebug() << "func" << func->getQualifiedNameAsString().c_str() << "done!";
     return ret;
 }
 
-bool CLangDeclBuilder::VisitValue(clang::ValueDecl *val)
+bool CLangDeclBuilder::VisitValueDecl(clang::ValueDecl *val)
 {
-    std::cout << "value" << std::endl;
-    return true;
+    return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitValueDecl(val);
 }
-
-
-
-
-
-
 
 class CLangParseJobPrivate {
 public:
     CLangParseJobPrivate(CLangParseJob *_parent);
     void run();
 
+private:
+    CLangParseJob *parent;
     clang::CompilerInstance ci;
     clang::LangOptions &lo;
     clang::HeaderSearchOptions &so;
     IndexedString url;
-
-private:
-    CLangParseJob *parent;
 };
 
-CLangParseJobPrivate::CLangParseJobPrivate (CLangParseJob *_parent) : ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(_parent->document()), parent(_parent)
+CLangParseJobPrivate::CLangParseJobPrivate (CLangParseJob *_parent) : parent(_parent), ci(), lo(ci.getLangOpts()), so(ci.getHeaderSearchOpts()), url(_parent->document())
 {
     lo.C99 = 1;
     lo.GNUMode = 0;
@@ -579,24 +482,6 @@ CLangParseJobPrivate::CLangParseJobPrivate (CLangParseJob *_parent) : ci(), lo(c
 
 void CLangParseJobPrivate::run()
 {
-    /*
-    DUChainWriteLocker lock(DUChain::lock());
-    ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(url));
-    if (!rTopContext.data()) {
-        qDebug() << "Creating new context!";
-        TopDUContext* topContext = new TopDUContext(IndexedString(url.toLocalFile()), RangeInRevision(CursorInRevision(0, 0), CursorInRevision(INT_MAX, INT_MAX)));
-
-        topContext->setType(DUContext::Global);
-
-        DUChain::self()->addDocumentChain(topContext);
-        rTopContext = DUChainUtils::standardContextForUrl(url);
-        Cpp::EnvironmentFile *pFile = new Cpp::EnvironmentFile(parent->document(), topContext);
-        DUChain::self()->updateContextEnvironment(rTopContext.data(), pFile);
-    }
-    rTopContext->clearProblems();
-    lock.unlock();
-    */
-
     // Clear previous problems
     {
       DUChainReadLocker l(DUChain::lock());
@@ -645,27 +530,19 @@ void CLangParseJobPrivate::run()
 
 CLangParseJob::CLangParseJob (const KUrl& url) : ParseJob (url)
 {
-    // TODO IndexedString's c_str are not 0-terminated. Pass the CLangParseJob instead and get the IndexedString from document() when needed.
     d = new CLangParseJobPrivate(this);
-    qDebug() << "CLANG OK!" << document().str();
 }
 
 CLangParseJob::~CLangParseJob()
 {
     delete d;
-    qDebug() << "CLANG DEST OK!";
 }
 
 void CLangParseJob::run()
 {
-    qDebug() << "CLANG PARSE BEGIN" << d->url.str();
-
     UrlParseLock urlLock(document());
 
     readContents();
-
-    qDebug() << "MODIFICATION:" << contents().modification;
-    qDebug() << "CONTENTS:" << QString(contents().contents);
 
     if (abortRequested())
         return abortJob();

@@ -13,25 +13,26 @@
 * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 * GNU General Public License for more details.
 */
-#ifndef CLANGPARSEJOB_H
-#define CLANGPARSEJOB_H
+#ifndef CLANGDIAGNOSTICS_H
+#define CLANGDIAGNOSTICS_H
 
-#include <language/backgroundparser/parsejob.h>
+#include <clang/Basic/Diagnostic.h>
+#include <clang/Basic/LangOptions.h>
 
-class CLangParseJobPrivate;
+#include <language/duchain/indexedstring.h>
+#include <language/interfaces/iproblem.h>
 
-class CLangParseJob: public KDevelop::ParseJob
+class KDevDiagnosticConsumer : public clang::DiagnosticConsumer
 {
-    Q_OBJECT
 public:
-    CLangParseJob(const KUrl& url);
-    virtual ~CLangParseJob();
+    KDevDiagnosticConsumer(clang::LangOptions _lo, KDevelop::IndexedString url) : lo(_lo), _url(url) {}
+    virtual void HandleDiagnostic(clang::DiagnosticsEngine::Level DiagLevel, const clang::Diagnostic &Info);
+    virtual DiagnosticConsumer *clone(clang::DiagnosticsEngine &Diags) const;
 
-    virtual void run();
+    clang::LangOptions lo;
 
 private:
-    CLangParseJobPrivate *d;
+    KDevelop::IndexedString _url;
 };
 
 #endif
-
