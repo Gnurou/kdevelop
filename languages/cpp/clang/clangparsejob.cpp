@@ -292,6 +292,10 @@ public:
     QMap<const clang::Decl *, DeclarationPointer> clangDecl2kdevDecl;
     QMap<const clang::Type *, DeclarationPointer> clangType2kdevType;
 
+    RangeInRevision rangeForLocation(const clang::SourceLocation &start, const clang::SourceLocation& end);
+    RangeInRevision rangeForLocation(const clang::SourceLocation &loc);
+    void createUse(const clang::NamedDecl* decl, const RangeInRevision& range);
+
     virtual bool VisitTypeDecl(clang::TypeDecl *decl);
     virtual bool VisitVarDecl(clang::VarDecl *decl);
     virtual bool VisitFieldDecl(clang::FieldDecl *decl);
@@ -302,6 +306,26 @@ public:
     virtual bool TraverseFunctionDecl(clang::FunctionDecl *func);
     virtual bool VisitValue(clang::ValueDecl *val);
 };
+
+RangeInRevision CLangDeclBuilder::rangeForLocation(const clang::SourceLocation &start, const clang::SourceLocation& end)
+{
+    return RangeInRevision(toCursor(start), toCursor(endOf(end)));
+}
+
+RangeInRevision CLangDeclBuilder::rangeForLocation(const clang::SourceLocation& loc)
+{
+    return rangeForLocation(loc, loc);
+}
+
+
+void CLangDeclBuilder::createUse(const clang::NamedDecl *decl, const RangeInRevision &range)
+{
+    qDebug() << "add use: " << decl->getQualifiedNameAsString().c_str() << "(" << range.start.line << range.start.column << "), (" << range.end.line << range.end.column << ")";
+    DUChainWriteLocker lock(DUChain::lock());
+    DeclarationPointer kDecl(clangDecl2kdevDecl[decl]);
+    currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), range);
+    lock.unlock();
+}
 
 /**
  * Register new type
@@ -341,10 +365,8 @@ AbstractType::Ptr CLangType2KDevType(const clang::QualType &type)
  */
 bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
 {
-    CursorInRevision vBegin(toCursor(decl->getLocation()));
-    CursorInRevision vEnd(toCursor(endOf(decl->getLocation())));
-    RangeInRevision nRange(vBegin, vEnd);
-    qDebug() << "var" << decl->getQualifiedNameAsString().c_str() << decl->getType().getAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
+    RangeInRevision nRange(rangeForLocation(decl->getLocation()));
+    qDebug() << "var" << decl->getQualifiedNameAsString().c_str() << decl->getType().getAsString().c_str() << nRange.start.line << nRange.start.column << nRange.end.line << nRange.end.column;
 
     DUChainWriteLocker lock(DUChain::lock());
     DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange, DeclarationIsDefinition));
@@ -371,10 +393,8 @@ bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
 
 bool CLangDeclBuilder::VisitFieldDecl(clang::FieldDecl *decl)
 {
-    CursorInRevision vBegin(toCursor(decl->getLocation()));
-    CursorInRevision vEnd(toCursor(endOf(decl->getLocation())));
-    RangeInRevision nRange(vBegin, vEnd);
-    qDebug() << "field" << decl->getQualifiedNameAsString().c_str() << decl->getType().getAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
+    RangeInRevision nRange(rangeForLocation(decl->getLocation()));
+    qDebug() << "field" << decl->getQualifiedNameAsString().c_str() << decl->getType().getAsString().c_str() << nRange.start.line << nRange.start.column << nRange.end.line << nRange.end.column;
 
     DUChainWriteLocker lock(DUChain::lock());
     DeclarationPointer kDecl(openDeclaration<Declaration>(QualifiedIdentifier(decl->getQualifiedNameAsString().c_str()), nRange, DeclarationIsDefinition));
@@ -394,40 +414,17 @@ bool CLangDeclBuilder::VisitFieldDecl(clang::FieldDecl *decl)
  */
 bool CLangDeclBuilder::VisitMemberExpr(clang::MemberExpr *expr)
 {
-    CursorInRevision vBegin(toCursor(expr->getExprLoc()));
-    CursorInRevision vEnd(toCursor(endOf(expr->getExprLoc())));
-    RangeInRevision nRange(vBegin, vEnd);
-    clang::ValueDecl *decl = expr->getMemberDecl();
-    /*clang::Decl *decl = expr->getDecl();*/
-    //clang::SourceLocation location(expr->getMemberLoc());
-    // value of getmemberdecl should point to the declaration
-    qDebug() << "member expr:" << decl->getQualifiedNameAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
-
-    DUChainWriteLocker lock(DUChain::lock());
-    DeclarationPointer kDecl(clangDecl2kdevDecl[decl]);
-    currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
-    lock.unlock();
+    createUse(expr->getMemberDecl(), rangeForLocation(expr->getExprLoc()));
 
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitMemberExpr(expr);
 }
 
 bool CLangDeclBuilder::VisitDesignatedInitExpr(clang::DesignatedInitExpr *expr)
 {
-    for (clang::DesignatedInitExpr::const_designators_iterator it = expr->designators_begin();
-         it != expr->designators_end(); it++) {
-        if (!it->isFieldDesignator())
-            continue;
-        CursorInRevision vBegin(toCursor(it->getFieldLoc()));
-        CursorInRevision vEnd(toCursor(endOf(it->getFieldLoc())));
-        RangeInRevision nRange(vBegin, vEnd);
-        clang::FieldDecl *decl = it->getField();
-
-        qDebug() << "designated init" << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
-
-        DUChainWriteLocker lock(DUChain::lock());
-        DeclarationPointer kDecl(clangDecl2kdevDecl[decl]);
-        currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
-        lock.unlock();
+    clang::DesignatedInitExpr::const_designators_iterator it;
+    for (it = expr->designators_begin(); it != expr->designators_end(); it++) {
+        if (it->isFieldDesignator())
+            createUse(it->getField(), rangeForLocation(it->getFieldLoc()));
     }
 
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitDesignatedInitExpr(expr);
@@ -435,20 +432,14 @@ bool CLangDeclBuilder::VisitDesignatedInitExpr(clang::DesignatedInitExpr *expr)
 
 bool CLangDeclBuilder::VisitDeclRefExpr(clang::DeclRefExpr *expr)
 {
-    CursorInRevision vBegin(toCursor(expr->getLocation()));
-    CursorInRevision vEnd(toCursor(endOf(expr->getLocation())));
-    RangeInRevision nRange(vBegin, vEnd);
-    clang::Decl *decl = expr->getDecl();
+    RangeInRevision nRange(rangeForLocation(expr->getLocation()));
+    clang::ValueDecl *decl = expr->getDecl();
 
     if (decl->classofKind(clang::Decl::Var)) {
-        clang::VarDecl *vDecl = static_cast<clang::VarDecl *>(decl);
-        qDebug() << "decl ref" << vDecl->getQualifiedNameAsString().c_str() << vBegin.line << vBegin.column << vEnd.line << vEnd.column;
-        DUChainWriteLocker lock(DUChain::lock());
-        DeclarationPointer kDecl(clangDecl2kdevDecl[decl]);
-        currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
-        lock.unlock();
+        //clang::VarDecl *vDecl = static_cast<clang::VarDecl *>(decl);
+        createUse(decl, nRange);
     } else {
-        qDebug() << "decl ref" << decl->getDeclKindName();
+        qDebug() << "unhandled decl ref" << decl->getDeclKindName();
     }
 
     return clang::RecursiveASTVisitor<CLangDeclBuilder>::VisitDeclRefExpr(expr);
