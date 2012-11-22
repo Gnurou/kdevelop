@@ -279,12 +279,8 @@ void CLangDeclBuilder::createUse(const clang::NamedDecl *decl, const RangeInRevi
  */
 bool CLangDeclBuilder::VisitTypeDecl(clang::TypeDecl *decl)
 {
-    CursorInRevision tBegin(toCursor(decl->getLocStart()));
-    CursorInRevision tEnd(toCursor(endOf(decl->getLocEnd())));
-    CursorInRevision nBegin(toCursor(decl->getLocation()));
-    CursorInRevision nEnd(toCursor(endOf(decl->getLocation())));
-    RangeInRevision nRange(nBegin, nEnd);
-    qDebug() << "type" << decl->getQualifiedNameAsString().c_str() << tBegin.line << tBegin.column << tEnd.line << tEnd.column << nBegin.line << nBegin.column << nEnd.line << nEnd.column;
+    RangeInRevision nRange(rangeForLocation(decl->getLocation());
+    qDebug() << "type" << decl->getQualifiedNameAsString().c_str() << nBegin.line << nBegin.column << nEnd.line << nEnd.column;
     // TODO why is the type always different compared to variable declarations?
     //qDebug() << astContext->getTypeDeclType(decl).getUnqualifiedType().getTypePtr();
 
@@ -313,6 +309,8 @@ bool CLangDeclBuilder::VisitVarDecl(clang::VarDecl *decl)
     //currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), nRange);
 
     // Use for type
+    // clang::TypeSpecTypeLoc::getNameLoc () from getTypeSourceInfo()->getTypeLoc()
+    // Also typeloc::getlocstart, getlocend, getendloc
     CursorInRevision tBegin(toCursor(decl->getTypeSpecStartLoc()));
     CursorInRevision tEnd(toCursor(endOf(decl->getTypeSpecStartLoc())));
     RangeInRevision tRange(tBegin, tEnd);
