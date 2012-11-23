@@ -217,7 +217,7 @@ public:
 
         CXCursorKind kind = clang_getCursorKind(cursor);
         CXString kindSpelling = clang_getCursorKindSpelling(kind);
-        CXString spelling = clang_getCursorSpelling(cursor);
+        CXString spelling = clang_getCursorDisplayName(cursor);
         CXSourceLocation sl = clang_getCursorLocation(cursor);
         unsigned int line, col;
         CXFile file;
@@ -225,11 +225,16 @@ public:
         
         clang_getExpansionLocation(sl, &file, &line, &col, NULL);
         fName = clang_getFileName(file);
-        printf("%3d,%3d: ", line, col);
-        printf("%s %s", clang_getCString(kindSpelling), clang_getCString(spelling));
+        fprintf(stderr, "%3d,%3d: ", line, col);
+        fprintf(stderr, "%s %s", clang_getCString(kindSpelling), clang_getCString(spelling));
+
+        CXType ctype = clang_getCursorType(cursor);
+        CXString types = clang_getTypeKindSpelling(ctype.kind);
+        fprintf(stderr, " of type %d %s", ctype.kind, clang_getCString(types));
+        clang_disposeString(types);
 
         if (clang_isDeclaration(kind)) {
-            printf(" declaration \n");
+            fprintf(stderr, " declaration \n");
 
             bool addDecls(clang_getCString(fName) != 0);
 
@@ -245,20 +250,28 @@ public:
                     case CXCursor_ClassDecl:
                     case CXCursor_StructDecl:
                         kDecl = openDeclaration<ClassDeclaration>(&cursor, &cursor, DeclarationIsDefinition);
+                        kDecl->setKind(Declaration::Type);
+                        kDecl.dynamicCast<ClassDeclaration>()->setClassType(ClassDeclarationData::Struct);
                         context = openContext(&cursor, DUContext::Class, &cursor);
                         context->setOwner(kDecl.data());
                         break;
                     case CXCursor_FunctionDecl:
                         kDecl = openDeclaration<FunctionDeclaration>(&cursor, &cursor, DeclarationIsDefinition);
+                        kDecl->setKind(Declaration::Type);
                         context = openContext(&cursor, DUContext::Function, &cursor);
                         context->setOwner(kDecl.data());
                         break;
                     case CXCursor_FieldDecl:
                         kDecl = openDeclaration<ClassMemberDeclaration>(&cursor, &cursor, DeclarationIsDefinition);
+                        kDecl->setKind(Declaration::Instance);
                         break;
                     case CXCursor_VarDecl:
                     case CXCursor_ParmDecl:
                         kDecl = openDeclaration<Declaration>(&cursor, &cursor, DeclarationIsDefinition);
+                        kDecl->setKind(Declaration::Instance);
+                        // Getting the type of struct instances:
+                        // For primitive types, getCursorType will return the right primitive CXType.
+                        // However for complex types it will return "Unexposed".
                         //kDecl->setType(CLangType2KDevType
                         break;
                     default:
@@ -276,21 +289,21 @@ public:
                 closeContext();
             if (kDecl.data())
                 closeDeclaration();
-        }
-        if (!clang_Cursor_isNull(clang_getCursorReferenced(cursor))) {
+        } else if (clang_isReference(kind) || kind == CXCursor_DeclRefExpr || kind == CXCursor_MemberRefExpr) {
+        //if (!clang_Cursor_isNull(clang_getCursorReferenced(cursor))) {
             CXCursor ref = clang_getCursorReferenced(cursor);
-            CXString refName = clang_getCursorSpelling(ref);
+            CXString refName = clang_getCursorDisplayName(ref);
             sl = clang_getCursorLocation(ref);
             clang_getExpansionLocation(sl, NULL, &line, &col, NULL);
-            printf(" references %s (%d %d)", clang_getCString(refName), line, col);
+            fprintf(stderr, " references %s (%d %d)", clang_getCString(refName), line, col);
             clang_disposeString(refName);
-            printf("\n");
+            fprintf(stderr, "\n");
 
             createUse(cursor);
             
             clang_visitChildren(cursor, visitCursor, this);
         } else {
-            printf("\n");
+            fprintf(stderr, "\n");
             clang_visitChildren(cursor, visitCursor, this);
         }
         clang_disposeString(fName);
