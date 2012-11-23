@@ -8,27 +8,10 @@ add_definitions(-I/usr/include  -DNDEBUG -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS 
 
 set(kdevclang_SRCS
     clangparsejob.cpp
-    clangdiagnostics.cpp
 )
 
 set(CLANGLIBS
-    pthread
-    ffi
-    dl
-    m
-    clangFrontend
-    clangDriver
-    clangSerialization
-    clangParse
-    clangSema
-    clangAnalysis
-    clangRewrite
-    clangEdit
-    clangAST
-    clangLex
-    clangBasic
-    LLVMMC
-    LLVMSupport
+    clang
 )
 
 link_directories(/usr/lib/llvm)
