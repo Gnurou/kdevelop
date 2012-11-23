@@ -101,6 +101,13 @@ bool operator <(const CXCursor &cursor1, const CXCursor &cursor2)
     return hash1 < hash2;
 }
 
+CursorInRevision toCursor(const CXSourceLocation &sl)
+{
+    unsigned int line, col;
+    clang_getExpansionLocation(sl, NULL, &line, &col, NULL);
+    return CursorInRevision(line - 1, col - 1);
+}
+
 class CLangContextBuilder : public AbstractContextBuilder<CXCursor, CXCursor>
 {
 public:
@@ -108,30 +115,24 @@ public:
 
     virtual ~CLangContextBuilder() { }
 
-    CursorInRevision toCursor(const CXSourceLocation &sl)
-    {
-        unsigned int line, col;
-        clang_getExpansionLocation(sl, NULL, &line, &col, NULL);
-        return CursorInRevision(line - 1, col - 1);
-    }
-
     virtual void setContextOnNode(CXCursor* node, DUContext* context)
     {
-        _declMap[*node] = context;
+        _declMap[clang_hashCursor(*node)] = context;
     }
 
     virtual DUContext* contextFromNode(CXCursor* node)
     {
-        if (!_declMap.contains(*node))
+        unsigned int hash = clang_hashCursor(*node);
+        if (!_declMap.contains(hash))
             return 0;
         else
-            return _declMap[*node];
+            return _declMap[hash];
     }
 
     virtual RangeInRevision editorFindRange(CXCursor* fromNode, CXCursor* toNode)
     {
-        CXSourceRange fromRange = clang_Cursor_getSpellingNameRange(*fromNode, 0, 0);
-        CXSourceRange toRange = clang_Cursor_getSpellingNameRange(*toNode, 0, 0);
+        CXSourceRange fromRange = clang_getCursorExtent(*fromNode);
+        CXSourceRange toRange = clang_getCursorExtent(*toNode);
 
         CursorInRevision fBegin(toCursor(clang_getRangeStart(fromRange)));
         CursorInRevision fEnd(toCursor(clang_getRangeEnd(toRange)));
@@ -143,14 +144,13 @@ public:
         if (!node)
             return QualifiedIdentifier();
         else {
-            CXString str = clang_getCursorUSR(*node);
+            //CXString str = clang_getCursorUSR(*node);
+            CXString str = clang_getCursorDisplayName(*node);
             QString id(clang_getCString(str));
             clang_disposeString(str);
             return QualifiedIdentifier(id);
         }
     }
-
-    const QMap<CXCursor, DUContext *> declMap() const { return _declMap; }
 
 protected:
     virtual DUContext* newContext(const RangeInRevision& range)
@@ -166,16 +166,21 @@ protected:
     /*
      * Map clang declarations to their corresponding context node.
      */
-    QMap<CXCursor, DUContext *> _declMap;
+    QMap<unsigned int, DUContext *> _declMap;
 
     IndexedString _url;
 };
 
-RangeInRevision rangeForDeclCursor(CXCursor cursor)
+RangeInRevision range2Range(CXSourceRange range)
 {
-    RangeInRevision ret;
+    CursorInRevision fBegin(toCursor(clang_getRangeStart(range)));
+    CursorInRevision fEnd(toCursor(clang_getRangeEnd(range)));
+    return RangeInRevision(fBegin, fEnd);
+}
 
-    return ret;
+RangeInRevision rangeForName(CXCursor cursor)
+{
+    return range2Range(clang_Cursor_getSpellingNameRange(cursor, 0, 0));
 }
 
 enum CXChildVisitResult visitCursor(CXCursor cursor, CXCursor parent, CXClientData client_data);
@@ -242,44 +247,42 @@ public:
             DUContext *context = 0;
 
             if (addDecls) {
-                RangeInRevision nRange(rangeForDeclCursor(cursor));
-
                 DUChainWriteLocker lock(DUChain::lock());
 
                 switch (kind) {
                     case CXCursor_ClassDecl:
                     case CXCursor_StructDecl:
-                        kDecl = openDeclaration<ClassDeclaration>(&cursor, &cursor, DeclarationIsDefinition);
+                        kDecl = openDeclaration<ClassDeclaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
                         kDecl->setKind(Declaration::Type);
                         kDecl.dynamicCast<ClassDeclaration>()->setClassType(ClassDeclarationData::Struct);
                         context = openContext(&cursor, DUContext::Class, &cursor);
                         context->setOwner(kDecl.data());
                         break;
                     case CXCursor_FunctionDecl:
-                        kDecl = openDeclaration<FunctionDeclaration>(&cursor, &cursor, DeclarationIsDefinition);
+                        kDecl = openDeclaration<FunctionDeclaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
                         kDecl->setKind(Declaration::Type);
                         context = openContext(&cursor, DUContext::Function, &cursor);
                         context->setOwner(kDecl.data());
                         break;
                     case CXCursor_FieldDecl:
-                        kDecl = openDeclaration<ClassMemberDeclaration>(&cursor, &cursor, DeclarationIsDefinition);
+                        kDecl = openDeclaration<Declaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
                         kDecl->setKind(Declaration::Instance);
                         break;
                     case CXCursor_VarDecl:
                     case CXCursor_ParmDecl:
-                        kDecl = openDeclaration<Declaration>(&cursor, &cursor, DeclarationIsDefinition);
-                        kDecl->setKind(Declaration::Instance);
+                        kDecl = openDeclaration<Declaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
+                        //kDecl->setKind(Declaration::Instance);
                         // Getting the type of struct instances:
                         // For primitive types, getCursorType will return the right primitive CXType.
                         // However for complex types it will return "Unexposed".
                         //kDecl->setType(CLangType2KDevType
                         break;
                     default:
-                        kDecl = openDeclaration<Declaration>(&cursor, &cursor, DeclarationIsDefinition);
+                        kDecl = openDeclaration<Declaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
                         break;
                 }
                 if (kDecl.data())
-                    clangDecl2kdevDecl[cursor] = kDecl;
+                    clangDecl2kdevDecl[clang_hashCursor(cursor)] = kDecl;
                 lock.unlock();
             }
 
@@ -318,7 +321,7 @@ public:
      * Map clang declarations to KDev declarations. That way we can look decls
      * at a glance without using KDev's lookup system.
      */
-    QMap<CXCursor, DeclarationPointer> clangDecl2kdevDecl;
+    QMap<unsigned int, DeclarationPointer> clangDecl2kdevDecl;
     QMap<QString, DeclarationPointer> clangType2kdevType;
 
     /*RangeInRevision rangeForLocation(const clang::SourceLocation &start, const clang::SourceLocation& end);
@@ -364,13 +367,13 @@ RangeInRevision CLangDeclBuilder::rangeForLocation(const clang::SourceLocation& 
 }
 */
 
-
 void CLangDeclBuilder::createUse(CXCursor refExpr)
 {
-    RangeInRevision range = editorFindRange(&refExpr, &refExpr);
+    CXSourceRange nRange = clang_Cursor_getSpellingNameRange(refExpr, 0, 0);
+    RangeInRevision range = range2Range(nRange);
     CXCursor ref = clang_getCursorReferenced(refExpr);
     DUChainWriteLocker lock(DUChain::lock());
-    DeclarationPointer kDecl(clangDecl2kdevDecl[ref]);
+    DeclarationPointer kDecl(clangDecl2kdevDecl[clang_hashCursor(ref)]);
     qDebug() << "create use" << kDecl.data() << range.start.line << range.end.column;
     currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), range);
     lock.unlock();
