@@ -46,6 +46,53 @@
 
 using namespace KDevelop;
 
+/**
+ * Convenience class to easily convert a CXString into a QString and not care
+ * about reference counting.
+ */
+class QCXString : public QString
+{
+public:
+    QCXString() : QString() {}
+    QCXString(const CXString &cstring) : QString(clang_getCString(cstring))
+    {
+        clang_disposeString(cstring);
+    }
+};
+
+AbstractType::Ptr typeOfNode(const CXCursor &node)
+{
+    CXType type = clang_getCursorType(node);
+
+    switch (type.kind) {
+        case CXType_Int:
+            return AbstractType::Ptr(new IntegralType(IntegralType::TypeInt));
+        case CXType_Char_S:
+        case CXType_Char_U:
+            return AbstractType::Ptr(new IntegralType(IntegralType::TypeChar));
+        case CXType_Char16:
+            return AbstractType::Ptr(new IntegralType(IntegralType::TypeChar16_t));
+        case CXType_Char32:
+            return AbstractType::Ptr(new IntegralType(IntegralType::TypeChar32_t));
+        case CXType_Unexposed:
+        {
+            // Probably a struct or something - find the declaration and return
+            // its type
+            CXCursor decl = clang_getTypeDeclaration(type);
+            CXCursorKind declKind = clang_getCursorKind(decl);
+            if (declKind == CXCursor_NoDeclFound)
+                return AbstractType::Ptr();
+            QCXString declName(clang_getCursorSpelling(decl));
+            StructureType *structType = new StructureType();
+            structType->setDeclarationId(DeclarationId(QualifiedIdentifier(declName)));
+            return AbstractType::Ptr(structType);
+        }
+        case CXType_Invalid:
+        default:
+            return AbstractType::Ptr();
+    }
+}
+
 template <class T>
 class CLangDUContextTpl : public T {
 public:
@@ -145,10 +192,8 @@ public:
             return QualifiedIdentifier();
         else {
             //CXString str = clang_getCursorUSR(*node);
-            CXString str = clang_getCursorDisplayName(*node);
-            QString id(clang_getCString(str));
-            clang_disposeString(str);
-            return QualifiedIdentifier(id);
+            QCXString str(clang_getCursorDisplayName(*node));
+            return QualifiedIdentifier(str);
         }
     }
 
@@ -216,106 +261,7 @@ public:
         clang_visitChildren(*node, visitCursor, this);
     }
 
-    enum CXChildVisitResult _visitCursor(CXCursor cursor, CXCursor parent)
-    {
-        CXChildVisitResult res = CXChildVisit_Recurse;
-
-        CXCursorKind kind = clang_getCursorKind(cursor);
-        CXString kindSpelling = clang_getCursorKindSpelling(kind);
-        CXString spelling = clang_getCursorDisplayName(cursor);
-        CXSourceLocation sl = clang_getCursorLocation(cursor);
-        unsigned int line, col;
-        CXFile file;
-        CXString fName;
-        
-        clang_getExpansionLocation(sl, &file, &line, &col, NULL);
-        fName = clang_getFileName(file);
-        fprintf(stderr, "%3d,%3d: ", line, col);
-        fprintf(stderr, "%s %s", clang_getCString(kindSpelling), clang_getCString(spelling));
-
-        CXType ctype = clang_getCursorType(cursor);
-        CXString types = clang_getTypeKindSpelling(ctype.kind);
-        fprintf(stderr, " of type %d %s", ctype.kind, clang_getCString(types));
-        clang_disposeString(types);
-
-        if (clang_isDeclaration(kind)) {
-            fprintf(stderr, " declaration \n");
-
-            bool addDecls(clang_getCString(fName) != 0);
-
-            DeclarationPointer kDecl;
-            DUContext *context = 0;
-
-            if (addDecls) {
-                DUChainWriteLocker lock(DUChain::lock());
-
-                switch (kind) {
-                    case CXCursor_ClassDecl:
-                    case CXCursor_StructDecl:
-                        kDecl = openDeclaration<ClassDeclaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
-                        kDecl->setKind(Declaration::Type);
-                        kDecl.dynamicCast<ClassDeclaration>()->setClassType(ClassDeclarationData::Struct);
-                        context = openContext(&cursor, DUContext::Class, &cursor);
-                        context->setOwner(kDecl.data());
-                        break;
-                    case CXCursor_FunctionDecl:
-                        kDecl = openDeclaration<FunctionDeclaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
-                        kDecl->setKind(Declaration::Type);
-                        context = openContext(&cursor, DUContext::Function, &cursor);
-                        context->setOwner(kDecl.data());
-                        break;
-                    case CXCursor_FieldDecl:
-                        kDecl = openDeclaration<Declaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
-                        kDecl->setKind(Declaration::Instance);
-                        break;
-                    case CXCursor_VarDecl:
-                    case CXCursor_ParmDecl:
-                        kDecl = openDeclaration<Declaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
-                        //kDecl->setKind(Declaration::Instance);
-                        // Getting the type of struct instances:
-                        // For primitive types, getCursorType will return the right primitive CXType.
-                        // However for complex types it will return "Unexposed".
-                        //kDecl->setType(CLangType2KDevType
-                        break;
-                    default:
-                        kDecl = openDeclaration<Declaration>(QualifiedIdentifier(clang_getCString(spelling)), rangeForName(cursor), DeclarationIsDefinition);
-                        break;
-                }
-                if (kDecl.data())
-                    clangDecl2kdevDecl[clang_hashCursor(cursor)] = kDecl;
-                lock.unlock();
-            }
-
-            clang_visitChildren(cursor, visitCursor, this);
-
-            if (context)
-                closeContext();
-            if (kDecl.data())
-                closeDeclaration();
-        } else if (clang_isReference(kind) || kind == CXCursor_DeclRefExpr || kind == CXCursor_MemberRefExpr) {
-        //if (!clang_Cursor_isNull(clang_getCursorReferenced(cursor))) {
-            CXCursor ref = clang_getCursorReferenced(cursor);
-            CXString refName = clang_getCursorDisplayName(ref);
-            sl = clang_getCursorLocation(ref);
-            clang_getExpansionLocation(sl, NULL, &line, &col, NULL);
-            fprintf(stderr, " references %s (%d %d)", clang_getCString(refName), line, col);
-            clang_disposeString(refName);
-            fprintf(stderr, "\n");
-
-            createUse(cursor);
-            
-            clang_visitChildren(cursor, visitCursor, this);
-        } else {
-            fprintf(stderr, "\n");
-            clang_visitChildren(cursor, visitCursor, this);
-        }
-        clang_disposeString(fName);
-        clang_disposeString(spelling);
-        clang_disposeString(kindSpelling);
-
-        res = CXChildVisit_Continue;
-        return res;
-    }
+    enum CXChildVisitResult _visitCursor(CXCursor cursor, CXCursor parent);
 
     /*
      * Map clang declarations to KDev declarations. That way we can look decls
@@ -332,6 +278,100 @@ private:
     IndexedString _url;
 };
 
+enum CXChildVisitResult CLangDeclBuilder::_visitCursor(CXCursor cursor, CXCursor parent)
+{
+    CXChildVisitResult res = CXChildVisit_Recurse;
+
+    CXCursorKind kind = clang_getCursorKind(cursor);
+    QCXString kindSpelling(clang_getCursorKindSpelling(kind));
+    QCXString spelling(clang_getCursorDisplayName(cursor));
+    CXSourceLocation sl = clang_getCursorLocation(cursor);
+    unsigned int line, col;
+    CXFile file;
+    QCXString fName;
+
+    clang_getExpansionLocation(sl, &file, &line, &col, NULL);
+    fName = clang_getFileName(file);
+    fprintf(stderr, "%3d,%3d: ", line, col);
+    fprintf(stderr, "%s %s", kindSpelling.toAscii().constData(), spelling.toAscii().constData());
+
+    CXType ctype = clang_getCursorType(cursor);
+    QCXString types = clang_getTypeKindSpelling(ctype.kind);
+    fprintf(stderr, " of type %d %s", ctype.kind, types.toAscii().constData());
+
+    if (clang_isDeclaration(kind)) {
+        fprintf(stderr, " declaration \n");
+
+        bool addDecls(!fName.isEmpty());
+
+        DeclarationPointer kDecl;
+        DUContext *context = 0;
+
+        if (addDecls) {
+            DUChainWriteLocker lock(DUChain::lock());
+
+            switch (kind) {
+                case CXCursor_ClassDecl:
+                case CXCursor_StructDecl:
+                    kDecl = openDeclaration<ClassDeclaration>(QualifiedIdentifier(spelling), rangeForName(cursor), DeclarationIsDefinition);
+                    kDecl->setKind(Declaration::Type);
+                    kDecl.dynamicCast<ClassDeclaration>()->setClassType(ClassDeclarationData::Struct);
+                    context = openContext(&cursor, DUContext::Class, &cursor);
+                    context->setOwner(kDecl.data());
+                    break;
+                case CXCursor_FunctionDecl:
+                    kDecl = openDeclaration<FunctionDeclaration>(QualifiedIdentifier(spelling), rangeForName(cursor), DeclarationIsDefinition);
+                    kDecl->setKind(Declaration::Type);
+                    context = openContext(&cursor, DUContext::Function, &cursor);
+                    context->setOwner(kDecl.data());
+                    break;
+                case CXCursor_FieldDecl:
+                    kDecl = openDeclaration<Declaration>(QualifiedIdentifier(spelling), rangeForName(cursor), DeclarationIsDefinition);
+                    kDecl->setKind(Declaration::Instance);
+                    break;
+                case CXCursor_VarDecl:
+                case CXCursor_ParmDecl:
+                    kDecl = openDeclaration<Declaration>(QualifiedIdentifier(spelling), rangeForName(cursor), DeclarationIsDefinition);
+                    kDecl->setKind(Declaration::Instance);
+                    break;
+                default:
+                    kDecl = openDeclaration<Declaration>(QualifiedIdentifier(spelling), rangeForName(cursor), DeclarationIsDefinition);
+                    break;
+            }
+            if (kDecl.data()) {
+                kDecl->setType(typeOfNode(cursor));
+                clangDecl2kdevDecl[clang_hashCursor(cursor)] = kDecl;
+            }
+            lock.unlock();
+        }
+
+        clang_visitChildren(cursor, visitCursor, this);
+
+        if (context)
+            closeContext();
+        if (kDecl.data())
+            closeDeclaration();
+    } else if (clang_isReference(kind) || kind == CXCursor_DeclRefExpr || kind == CXCursor_MemberRefExpr) {
+    //if (!clang_Cursor_isNull(clang_getCursorReferenced(cursor))) {
+        CXCursor ref = clang_getCursorReferenced(cursor);
+        QCXString refName(clang_getCursorDisplayName(ref));
+        sl = clang_getCursorLocation(ref);
+        clang_getExpansionLocation(sl, NULL, &line, &col, NULL);
+        fprintf(stderr, " references %s (%d %d)", refName.toAscii().constData(), line, col);
+        fprintf(stderr, "\n");
+
+        createUse(cursor);
+
+        clang_visitChildren(cursor, visitCursor, this);
+    } else {
+        fprintf(stderr, "\n");
+        clang_visitChildren(cursor, visitCursor, this);
+    }
+
+    res = CXChildVisit_Continue;
+    return res;
+}
+
 enum CXChildVisitResult visitCursor(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
     CLangDeclBuilder* builder = (CLangDeclBuilder *)client_data;
@@ -339,23 +379,6 @@ enum CXChildVisitResult visitCursor(CXCursor cursor, CXCursor parent, CXClientDa
 }
 
 /*
-AbstractType::Ptr CLangType2KDevType(const clang::QualType &type)
-{
-    const clang::Type *t = type.getTypePtr();
-
-    if (t->isBuiltinType()) {
-        // TODO support other built-in types
-        if (t->isIntegerType()) {
-            return AbstractType::Ptr(new IntegralType(IntegralType::TypeInt));
-        }
-        return AbstractType::Ptr(0);
-    } else {
-      StructureType *str = new StructureType();
-      str->setDeclarationId(DeclarationId(QualifiedIdentifier(type.getAsString().c_str())));
-      return AbstractType::Ptr(str);
-    }
-}
-
 RangeInRevision CLangDeclBuilder::rangeForLocation(const clang::SourceLocation &start, const clang::SourceLocation& end)
 {
     return RangeInRevision(toCursor(start), toCursor(endOf(end)));
