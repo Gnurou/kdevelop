@@ -151,7 +151,7 @@ bool operator <(const CXCursor &cursor1, const CXCursor &cursor2)
 CursorInRevision toCursor(const CXSourceLocation &sl)
 {
     unsigned int line, col;
-    clang_getExpansionLocation(sl, NULL, &line, &col, NULL);
+    clang_getSpellingLocation(sl, NULL, &line, &col, NULL);
     return CursorInRevision(line - 1, col - 1);
 }
 
@@ -299,7 +299,7 @@ enum CXChildVisitResult CLangDeclBuilder::_visitCursor(CXCursor cursor, CXCursor
     QCXString types = clang_getTypeKindSpelling(ctype.kind);
     fprintf(stderr, " of type %d %s", ctype.kind, types.toAscii().constData());
 
-    if (clang_isDeclaration(kind)) {
+    if (clang_isDeclaration(kind) || clang_isPreprocessing(kind)) {
         fprintf(stderr, " declaration \n");
 
         bool addDecls(!fName.isEmpty());
@@ -311,11 +311,16 @@ enum CXChildVisitResult CLangDeclBuilder::_visitCursor(CXCursor cursor, CXCursor
             DUChainWriteLocker lock(DUChain::lock());
 
             switch (kind) {
+                case CXCursor_MacroDefinition:
+                    qDebug() << "MACRO" << spelling;
+                    kDecl = openDeclaration<Declaration>(QualifiedIdentifier(spelling), rangeForName(cursor), DeclarationIsDefinition);
+                    kDecl->setKind(Declaration::Instance);
+                    break;
                 case CXCursor_ClassDecl:
                 case CXCursor_StructDecl:
                     kDecl = openDeclaration<ClassDeclaration>(QualifiedIdentifier(spelling), rangeForName(cursor), DeclarationIsDefinition);
                     kDecl->setKind(Declaration::Type);
-                    kDecl.dynamicCast<ClassDeclaration>()->setClassType(ClassDeclarationData::Struct);
+                    kDecl.dynamicCast<ClassDeclaration>()->setClassType(kind == CXCursor_ClassDecl ? ClassDeclarationData::Class : ClassDeclarationData::Struct);
                     context = openContext(&cursor, DUContext::Class, &cursor);
                     context->setOwner(kDecl.data());
                     break;
