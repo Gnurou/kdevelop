@@ -431,7 +431,7 @@ void CLangParseJobPrivate::run()
     }
 
     CXIndex index = clang_createIndex(0, 0);
-    CXTranslationUnit tu = clang_parseTranslationUnit(index, url.toUrl().toLocalFile().toAscii().constData(), 0, 0, 0, 0, CXTranslationUnit_None);
+    CXTranslationUnit tu = clang_parseTranslationUnit(index, url.toUrl().toLocalFile().toAscii().constData(), 0, 0, 0, 0, CXTranslationUnit_DetailedPreprocessingRecord);
     CLangDeclBuilder builder(url);
     builder.HandleTranslationUnit(tu);
 
