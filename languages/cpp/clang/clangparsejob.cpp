@@ -252,7 +252,10 @@ public:
         }
         qDebug() << "Start parsing" << _url.str() << "with context" << rTopContext.data();
         CXCursor topCursor = clang_getTranslationUnitCursor(tu);
-        build(_url, &topCursor, rTopContext);
+
+        topContext = build(_url, &topCursor, rTopContext);
+
+        processDiagnostics(tu);
     }
 
     /// Should only be called once on the root node
@@ -275,6 +278,8 @@ public:
     void createUse(CXCursor refExpr);
 
 private:
+    ReferencedTopDUContext topContext;
+    void processDiagnostics(CXTranslationUnit tu);
     IndexedString _url;
 };
 
@@ -405,6 +410,21 @@ void CLangDeclBuilder::createUse(CXCursor refExpr)
     qDebug() << "create use" << kDecl.data() << range.start.line << range.end.column;
     currentContext()->createUse(currentContext()->topContext()->indexForUsedDeclaration(kDecl.data()), range);
     lock.unlock();
+}
+
+void CLangDeclBuilder::processDiagnostics(CXTranslationUnit tu)
+{
+    for (unsigned int i = 0, n = clang_getNumDiagnostics(tu); i < n; i++) {
+        CXDiagnostic diag = clang_getDiagnostic(tu, i);
+        QCXString message(clang_getDiagnosticSpelling(diag));
+        CXSourceLocation location = clang_getDiagnosticLocation(diag);
+        unsigned int line, col;
+    
+        clang_getExpansionLocation(location, NULL, &line, &col, NULL);
+        qDebug() << line << col << message << clang_getDiagnosticNumRanges(diag) << clang_getDiagnosticNumFixIts(diag);
+
+        clang_disposeDiagnostic(diag);
+    }
 }
 
 class CLangParseJobPrivate {

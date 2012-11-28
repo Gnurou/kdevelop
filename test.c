@@ -5,8 +5,6 @@
 
 #define MYCONST 10
 
-#include <test.h>
-
 #define add(a, b) (a + b)
 
 struct bar {
@@ -44,7 +42,7 @@ int testFunc(int a, bar b)
     for (int i = 0; i < 10; i++)
         testFunc(b.c + i + myconst2, ga);
     
-    return b.b + b.amember + a;
+    return b + b.amember + a;
 }
 
 int testFunc2(struct foo aFoo)
