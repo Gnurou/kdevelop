@@ -301,6 +301,7 @@ enum CXChildVisitResult CLangDeclBuilder::_visitCursor(CXCursor cursor, CXCursor
     fName = clang_getFileName(file);
     fprintf(stderr, "%3d,%3d: ", line, col);
     fprintf(stderr, "%s %s", kindSpelling.toAscii().constData(), spelling.toAscii().constData());
+    fprintf(stderr, " (%s) ", fName.toUtf8().constData());
 
     CXType ctype = clang_getCursorType(cursor);
     QCXString types = clang_getTypeKindSpelling(ctype.kind);
@@ -308,6 +309,12 @@ enum CXChildVisitResult CLangDeclBuilder::_visitCursor(CXCursor cursor, CXCursor
 
     if (clang_isDeclaration(kind) || clang_isPreprocessing(kind)) {
         fprintf(stderr, " declaration \n");
+
+        QCXString comment(clang_Cursor_getRawCommentText(cursor));
+
+        if (!comment.isEmpty()) {
+            qDebug() << "comment: " << comment;
+        }
 
         bool addDecls(!fName.isEmpty());
 

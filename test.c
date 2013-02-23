@@ -26,6 +26,9 @@ typedef struct foo bar;
 
 const int myconst2 = MYCONST;
 
+/**
+ * Documentation for ga
+ */
 struct foo ga = {
     .amember = myconst2,
     .b = 4,
