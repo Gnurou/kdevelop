@@ -390,18 +390,6 @@ enum CXChildVisitResult visitCursor(CXCursor cursor, CXCursor parent, CXClientDa
     return builder->_visitCursor(cursor, parent);
 }
 
-/*
-RangeInRevision CLangDeclBuilder::rangeForLocation(const clang::SourceLocation &start, const clang::SourceLocation& end)
-{
-    return RangeInRevision(toCursor(start), toCursor(endOf(end)));
-}
-
-RangeInRevision CLangDeclBuilder::rangeForLocation(const clang::SourceLocation& loc)
-{
-    return rangeForLocation(loc, loc);
-}
-*/
-
 void CLangDeclBuilder::createUse(CXCursor refExpr)
 {
     CXSourceRange nRange = clang_Cursor_getSpellingNameRange(refExpr, 0, 0);
