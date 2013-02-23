@@ -3,6 +3,8 @@
  * -> cleanup code, make video and publish!
  */
 
+#include "test.h"
+
 #define MYCONST 10
 
 #define add(a, b) (a + b)
@@ -43,10 +45,10 @@ int testFunc(int a, bar b)
     for (int i = 0; i < 10; i++)
         testFunc(b.c + i + myconst2, ga);
     
-    return b + b.amember + a;
+    return b.amember + a;
 }
 
 int testFunc2(struct foo aFoo)
 {
-    return aFoo.ameber + myconst2;
+    return aFoo.amember + myconst2;
 }
