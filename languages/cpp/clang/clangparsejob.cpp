@@ -409,9 +409,57 @@ void CLangDeclBuilder::processDiagnostics(CXTranslationUnit tu)
         QCXString message(clang_getDiagnosticSpelling(diag));
         CXSourceLocation location = clang_getDiagnosticLocation(diag);
         unsigned int line, col;
-    
+
+        ProblemData::Severity severity;
+
+        switch (clang_getDiagnosticSeverity(diag))
+        {
+            case CXDiagnostic_Note:
+                severity = ProblemData::Hint;
+                break;
+            case CXDiagnostic_Warning:
+                severity = ProblemData::Warning;
+                break;
+            case CXDiagnostic_Error:
+            case CXDiagnostic_Fatal:
+                severity = ProblemData::Error;
+                break;
+            default:
+                continue;
+        }
+
         clang_getExpansionLocation(location, NULL, &line, &col, NULL);
         qDebug() << line << col << message << clang_getDiagnosticNumRanges(diag) << clang_getDiagnosticNumFixIts(diag);
+
+        /* TODO we report one problem per range - this is not bad, but it would be
+         * better if KDEvelop could handle ranges like CLang does */
+        /* TODO handle fixits and show them! */
+        for (unsigned int i = 0; i < clang_getDiagnosticNumRanges(diag); i++) {
+            CXSourceRange range(clang_getDiagnosticRange(diag, i));
+            CXSourceLocation start = clang_getRangeStart(range);
+            CXSourceLocation end = clang_getRangeEnd(range);
+            unsigned int line2, col2;
+
+            clang_getExpansionLocation(start, NULL, &line, &col, NULL);
+            clang_getExpansionLocation(end, NULL, &line2, &col2, NULL);
+            qDebug() << "  (" << line << "," << col << ") (" << line2 << "," << col2 << ")";
+
+            ProblemPointer p(new Problem);
+            p->setDescription(message);
+            p->setSource(ProblemData::Parser);
+            p->setSeverity(severity);
+
+            DocumentRange docRange(_url, SimpleRange(SimpleCursor(line - 1, col - 1), SimpleCursor(line2 - 1, col2 - 1)));
+            p->setFinalLocation(docRange);
+
+            DUChainWriteLocker lock(DUChain::lock());
+            ReferencedTopDUContext rTopContext(DUChainUtils::standardContextForUrl(_url.toUrl()));
+            if (rTopContext)
+                rTopContext->addProblem(p);
+            else
+                qDebug() << "No top context to report error to!";
+            lock.unlock();
+        }
 
         clang_disposeDiagnostic(diag);
     }
