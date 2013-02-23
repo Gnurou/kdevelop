@@ -1,7 +1,7 @@
 /*
 * This file is part of KDevelop
 *
-* Copyright 2012 Alexandre Courbot <gnurou@gmail.com>
+* Copyright 2012, 2013 Alexandre Courbot <gnurou@gmail.com>
 *
 * This program is free software; you can redistribute it and/or modify
 * it under the terms of the GNU Library General Public License as
@@ -21,6 +21,8 @@
 #include <interfaces/icore.h>
 #include <interfaces/ilanguage.h>
 #include <interfaces/ilanguagecontroller.h>
+#include <interfaces/idocument.h>
+#include <interfaces/idocumentcontroller.h>
 #include <language/backgroundparser/backgroundparser.h>
 #include <language/interfaces/iproblem.h>
 #include <language/interfaces/icodehighlighting.h>
@@ -441,6 +443,18 @@ CLangParseJobPrivate::CLangParseJobPrivate (CLangParseJob *_parent) : parent(_pa
 {
 }
 
+static QList<IDocument *> buildUnsavedDocumentsList()
+{
+    QList<IDocument *> unsavedDocuments;
+
+    foreach (IDocument *doc, ICore::self()->documentController()->openDocuments()) {
+        if (doc->state() != IDocument::Clean && doc->isTextDocument())
+            unsavedDocuments << doc;
+    }
+
+    return unsavedDocuments;
+}
+
 void CLangParseJobPrivate::run()
 {
     // Clear previous problems
@@ -455,8 +469,29 @@ void CLangParseJobPrivate::run()
       }
     }
 
+    QList<IDocument *> unsavedDocuments(buildUnsavedDocumentsList());
+    // To keep references to names and contents of unsaved documents
+    QList<QByteArray> unsavedDocumentsNames;
+    QList<QByteArray> unsavedDocumentsContents;
+    struct CXUnsavedFile *unsavedFiles = 0;
+    if (!unsavedDocuments.empty()) {
+        struct CXUnsavedFile *it;
+
+        unsavedFiles = new CXUnsavedFile[unsavedDocuments.size()];
+        it = unsavedFiles;
+
+        foreach (IDocument *doc, unsavedDocuments) {
+            unsavedDocumentsNames << doc->url().toLocalFile().toUtf8();
+            unsavedDocumentsContents << doc->textDocument()->text().toUtf8();
+            it->Filename = unsavedDocumentsNames.last().constData();
+            it->Contents = unsavedDocumentsContents.last().constData();
+            it->Length = unsavedDocumentsContents.last().size();
+            it++;
+        }
+    }
+
     CXIndex index = clang_createIndex(0, 0);
-    CXTranslationUnit tu = clang_parseTranslationUnit(index, url.toUrl().toLocalFile().toAscii().constData(), 0, 0, 0, 0, CXTranslationUnit_DetailedPreprocessingRecord);
+    CXTranslationUnit tu = clang_parseTranslationUnit(index, url.toUrl().toLocalFile().toAscii().constData(), 0, 0, unsavedFiles, unsavedDocuments.size(), CXTranslationUnit_DetailedPreprocessingRecord);
     CLangDeclBuilder builder(url);
     builder.HandleTranslationUnit(tu);
 
@@ -481,6 +516,9 @@ void CLangParseJobPrivate::run()
 
     // TODO only if needed! See cppparsejob::highlightifneeded
     CppLanguageSupport::self()->codeHighlighting()->highlightDUChain(rTopContext);
+
+    if (unsavedFiles)
+        delete[] unsavedFiles;
 }
 
 

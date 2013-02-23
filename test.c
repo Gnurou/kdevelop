@@ -16,6 +16,7 @@ struct foo {
 	int b;
 	int c;
     int d;
+    int e;
     struct bar bb;
 };
 
