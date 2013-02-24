@@ -16,8 +16,6 @@
 
 #include "clangparsejob.h"
 
-#include <clang-c/Index.h>
-
 #include <interfaces/icore.h>
 #include <interfaces/ilanguage.h>
 #include <interfaces/ilanguagecontroller.h>
@@ -45,6 +43,10 @@
 #include <language/duchain/builders/abstractusebuilder.h>
 
 #include <QElapsedTimer>
+#include <QStack>
+#include <QPair>
+
+#include <clang-c/Index.h>
 
 using namespace KDevelop;
 
@@ -253,9 +255,16 @@ public:
             rTopContext->deleteLocalDeclarations();
         }
         qDebug() << "Start parsing" << _url.str() << "with context" << rTopContext.data();
+        pushFileContext(_url.str(), 0);
         CXCursor topCursor = clang_getTranslationUnitCursor(tu);
 
         topContext = build(_url, &topCursor, rTopContext);
+        
+        qDebug() << "Parsing of" << _url.str() << "complete";
+        /* Close remaining contexts */
+        while (!includeStack.isEmpty()) {
+            popFileContext();
+        }
 
         processDiagnostics(tu);
     }
@@ -283,12 +292,26 @@ private:
     ReferencedTopDUContext topContext;
     void processDiagnostics(CXTranslationUnit tu);
     IndexedString _url;
+    QStack< QPair<QString, QString> > includeStack;
+
+    void pushFileContext(const QString &file, void *ptr);
+    void *popFileContext();
 };
+
+void CLangDeclBuilder::pushFileContext(const QString &file, void *ptr)
+{
+    includeStack.push(QPair<QString, QString>(file, QString()));
+    qDebug() << "Pushing file context " << file << includeStack.size();
+}
+
+void* CLangDeclBuilder::popFileContext()
+{
+    qDebug() << "Popping file context " << includeStack.pop() << includeStack.size() - 1;
+    return 0;
+}
 
 enum CXChildVisitResult CLangDeclBuilder::_visitCursor(CXCursor cursor, CXCursor parent)
 {
-    CXChildVisitResult res = CXChildVisit_Recurse;
-
     CXCursorKind kind = clang_getCursorKind(cursor);
     QCXString kindSpelling(clang_getCursorKindSpelling(kind));
     QCXString spelling(clang_getCursorDisplayName(cursor));
@@ -299,13 +322,26 @@ enum CXChildVisitResult CLangDeclBuilder::_visitCursor(CXCursor cursor, CXCursor
 
     clang_getExpansionLocation(sl, &file, &line, &col, NULL);
     fName = clang_getFileName(file);
-    fprintf(stderr, "%3d,%3d: ", line, col);
+    fprintf(stderr, "%3d,%3d %3d: ", line, col, kind);
     fprintf(stderr, "%s %s", kindSpelling.toAscii().constData(), spelling.toAscii().constData());
     fprintf(stderr, " (%s) ", fName.toUtf8().constData());
 
     CXType ctype = clang_getCursorType(cursor);
     QCXString types = clang_getTypeKindSpelling(ctype.kind);
     fprintf(stderr, " of type %d %s", ctype.kind, types.toAscii().constData());
+
+    /* Check if we need to pop some elements off the include stack */
+    while (includeStack.top().first != fName && !fName.isEmpty()) {
+        popFileContext();
+    }
+
+    /* Include directive? Add a new context to our include stack */
+    if (kind == CXCursor_InclusionDirective) {
+        QCXString includedFile = clang_getFileName(clang_getIncludedFile(cursor));
+        pushFileContext(includedFile, 0);
+        clang_visitChildren(cursor, visitCursor, this);
+        return CXChildVisit_Continue;
+    }
 
     if (clang_isDeclaration(kind) || clang_isPreprocessing(kind)) {
         fprintf(stderr, " declaration \n");
@@ -326,7 +362,6 @@ enum CXChildVisitResult CLangDeclBuilder::_visitCursor(CXCursor cursor, CXCursor
 
             switch (kind) {
                 case CXCursor_MacroDefinition:
-                    qDebug() << "MACRO" << spelling;
                     kDecl = openDeclaration<Declaration>(QualifiedIdentifier(spelling), rangeForName(cursor), DeclarationIsDefinition);
                     kDecl->setKind(Declaration::Instance);
                     break;
@@ -387,8 +422,7 @@ enum CXChildVisitResult CLangDeclBuilder::_visitCursor(CXCursor cursor, CXCursor
         clang_visitChildren(cursor, visitCursor, this);
     }
 
-    res = CXChildVisit_Continue;
-    return res;
+    return CXChildVisit_Continue;
 }
 
 enum CXChildVisitResult visitCursor(CXCursor cursor, CXCursor parent, CXClientData client_data)

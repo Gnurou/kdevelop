@@ -31,7 +31,7 @@ const int myconst2 = MYCONST;
  */
 struct foo ga = {
     .amember = myconst2,
-    .b = 4,
+    .b = 5,
 };
 
 int testFunc(int a, bar b)
@@ -39,6 +39,7 @@ int testFunc(int a, bar b)
     struct foo aFoo = {
         .amember = 10,
         .b = 5,
+        .e = 10,
     };
 
     aFoo.amember = (a +  b.c);
