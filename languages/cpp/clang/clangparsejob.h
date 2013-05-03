@@ -24,7 +24,7 @@ class CLangParseJob: public KDevelop::ParseJob
 {
     Q_OBJECT
 public:
-    CLangParseJob(const KUrl& url);
+    CLangParseJob(const KDevelop::IndexedString& url, KDevelop::ILanguageSupport *lang);
     virtual ~CLangParseJob();
 
     virtual void run();

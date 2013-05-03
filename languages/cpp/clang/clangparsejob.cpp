@@ -599,7 +599,7 @@ void CLangParseJobPrivate::run()
 }
 
 
-CLangParseJob::CLangParseJob (const KUrl& url) : ParseJob (url)
+CLangParseJob::CLangParseJob (const KDevelop::IndexedString& url, KDevelop::ILanguageSupport *lang) : ParseJob (url, lang)
 {
     d = new CLangParseJobPrivate(this);
 }

@@ -417,7 +417,7 @@ CppLanguageSupport* CppLanguageSupport::self() {
 KDevelop::ParseJob *CppLanguageSupport::createParseJob( const IndexedString &url )
 {
     //return new CPPParseJob( url, this );
-    return new CLangParseJob( url );
+    return new CLangParseJob( url, this );
 }
 
 KDevelop::ICodeHighlighting *CppLanguageSupport::codeHighlighting() const
