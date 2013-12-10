@@ -2894,13 +2894,16 @@ bool Parser::parseDesignatedInitializer(InitializerClauseAST *&ast)
   const ListNode<ExpressionAST*> *indexes = 0;
   if (session->token_stream->lookAhead() == '.')
     {
-    // Designated member
-    advance();
-    if (!parseName(member, Parser::DontAcceptTemplate))
-      {
-        rewind(start);
-        return false;
-      }
+      // Designated member
+      while (session->token_stream->lookAhead() == '.')
+        {
+          advance();
+          if (!parseName(member, Parser::DontAcceptTemplate))
+            {
+              rewind(start);
+              return false;
+            }
+        }
     }
   else
     {
